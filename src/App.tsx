@@ -39,6 +39,7 @@ import { RightInspector } from "./components/RightInspector";
 import { SafetyConfirmModal } from "./components/SafetyConfirmModal";
 import { SyncWizard } from "./components/SyncWizard";
 import { TableDesigner } from "./components/TableDesigner";
+import { ToastContainer } from "./components/ToastContainer";
 import { VisualQueryBuilder } from "./components/VisualQueryBuilder";
 import { useWorkbenchStore, type WorkbenchTab } from "./store/useWorkbenchStore";
 
@@ -259,6 +260,7 @@ export function App() {
       <ConnectionModal />
       <CommandPalette />
       <SafetyConfirmModal />
+      <ToastContainer />
     </div>
   );
 }

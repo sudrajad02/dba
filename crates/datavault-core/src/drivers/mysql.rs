@@ -1,6 +1,6 @@
 use crate::drivers::{
-    build_order_clause, build_staged_change_sql, build_where_clause, qualified_table, quote_ident,
-    split_sql_statements, SqlDriver,
+    build_order_clause, build_staged_change_sql, build_where_clause, is_compound_ddl,
+    qualified_table, quote_ident, split_sql_statements, SqlDriver,
 };
 use crate::error::{DatavaultError, Result};
 use crate::models::*;
@@ -708,6 +708,13 @@ impl SqlDriver for MysqlDriver {
 
     async fn execute_ddl(&self, database: Option<&str>, ddl: &str) -> Result<()> {
         let mut conn = self.get_conn(database).await?;
+        if is_compound_ddl(ddl) {
+            let trimmed = ddl.trim();
+            if !trimmed.is_empty() {
+                conn.query_drop(trimmed).await.map_err(map_mysql_error)?;
+            }
+            return Ok(());
+        }
         for stmt in split_sql_statements(ddl) {
             conn.query_drop(&stmt).await.map_err(map_mysql_error)?;
         }
@@ -828,7 +835,9 @@ impl SqlDriver for MysqlDriver {
 }
 
 fn strip_mysql_definer(ddl: &str) -> String {
-    if let Ok(re) = regex::Regex::new(r"(?i)\bDEFINER\s*=\s*`[^`]+`@`[^`]+`\s*") {
+    if let Ok(re) =
+        regex::Regex::new(r"(?i)\bDEFINER\s*=\s*(?:`[^`]+`|'[^']+'|[^\s@]+)@(?:`[^`]+`|'[^']+'|\S+)\s*")
+    {
         re.replace(ddl, "").to_string()
     } else {
         ddl.to_string()

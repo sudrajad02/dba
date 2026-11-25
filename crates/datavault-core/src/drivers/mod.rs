@@ -198,6 +198,52 @@ pub fn build_staged_change_sql(
     stmts
 }
 
+/// Returns true when the SQL is a single compound routine/trigger/event DDL statement
+/// (e.g. `CREATE PROCEDURE ... BEGIN ... ; END`) whose internal semicolons must NOT be
+/// split by `split_sql_statements`.
+pub fn is_compound_ddl(sql: &str) -> bool {
+    let mut s = sql.trim_start();
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            s = match rest.find('\n') {
+                Some(idx) => rest[idx + 1..].trim_start(),
+                None => "",
+            };
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = match rest.find("*/") {
+                Some(idx) => rest[idx + 2..].trim_start(),
+                None => "",
+            };
+        } else {
+            break;
+        }
+    }
+
+    let upper = s.to_ascii_uppercase();
+    if !(upper.starts_with("CREATE ")
+        || upper.starts_with("CREATE\t")
+        || upper.starts_with("CREATE\n")
+        || upper.starts_with("CREATE\r"))
+    {
+        return false;
+    }
+
+    let header_end = upper.find('(').unwrap_or(upper.len());
+    let header = &upper[..header_end];
+    for tok in header.split_whitespace() {
+        match tok {
+            "TABLE" | "INDEX" | "VIEW" | "DATABASE" | "SCHEMA" | "SEQUENCE" | "TYPE" => {
+                return false;
+            }
+            "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER" | "EVENT" => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Splits a multi-statement SQL script while respecting single quotes, double quotes,
 /// dollar-quoted strings (PostgreSQL `$$`), and `--` / `/* */` comments.
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -601,4 +647,34 @@ pub fn generate_table_design_ddl(engine: DbEngine, draft: &TableDesignDraft) -> 
     }
 
     ddl
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_compound_ddl;
+
+    #[test]
+    fn detects_compound_routine_ddl() {
+        assert!(is_compound_ddl(
+            "CREATE PROCEDURE `p_add_column`(IN t VARCHAR(64))\nBEGIN\n  DECLARE x INT;\n  SET x = 1;\nEND"
+        ));
+        assert!(is_compound_ddl(
+            "CREATE DEFINER=`root`@`%` FUNCTION `decode_id`(s VARCHAR(64)) RETURNS BIGINT\nBEGIN\n  RETURN 1;\nEND"
+        ));
+        assert!(is_compound_ddl(
+            "CREATE TRIGGER trg_audit AFTER INSERT ON users FOR EACH ROW BEGIN INSERT INTO log VALUES (1); END"
+        ));
+        assert!(is_compound_ddl(
+            "CREATE EVENT evt_clean ON SCHEDULE EVERY 1 DAY DO BEGIN DELETE FROM tmp; END"
+        ));
+        assert!(is_compound_ddl(
+            "-- comment\nCREATE OR REPLACE PROC dbo.my_proc AS BEGIN SELECT 1; SELECT 2; END"
+        ));
+        assert!(!is_compound_ddl(
+            "CREATE TABLE `users` (`id` INT, `procedure` VARCHAR(50)); CREATE INDEX idx ON users(id);"
+        ));
+        assert!(!is_compound_ddl(
+            "CREATE VIEW v_test AS SELECT function_name FROM procs;"
+        ));
+    }
 }

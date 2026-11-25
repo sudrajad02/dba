@@ -1,6 +1,6 @@
 use crate::drivers::{
     build_order_clause, build_staged_change_sql, build_where_clause, generate_table_design_ddl,
-    qualified_table, split_sql_statements, SqlDriver,
+    is_compound_ddl, qualified_table, split_sql_statements, SqlDriver,
 };
 use crate::error::{DatavaultError, Result};
 use crate::models::*;
@@ -1051,6 +1051,16 @@ impl SqlDriver for MssqlDriver {
 
     async fn execute_ddl(&self, database: Option<&str>, ddl: &str) -> Result<()> {
         let mut client = self.open_client(database).await?;
+        if is_compound_ddl(ddl) {
+            let trimmed = ddl.trim();
+            if !trimmed.is_empty() {
+                client
+                    .execute(trimmed, &[])
+                    .await
+                    .map_err(map_mssql_error)?;
+            }
+            return Ok(());
+        }
         for stmt in split_sql_statements(ddl) {
             client
                 .execute(&stmt, &[])

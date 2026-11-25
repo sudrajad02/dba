@@ -1,4 +1,4 @@
-`[workspace]
+[workspace]
 resolver = "2"
 members = [
     "crates/datavault-core",
@@ -9,7 +9,6 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Anggi"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -144,7 +144,9 @@ interface WorkbenchStore {
   inspectedTableMeta: TableMetadata | null;
   setInspectedTableMeta: (meta: TableMetadata | null) => void;
   consoleLogs: ConsoleLogEntry[];
+  toasts: ConsoleLogEntry[];
   addLog: (level: ConsoleLogEntry["level"], message: string, sql?: string) => void;
+  dismissToast: (id: string) => void;
   clearLogs: () => void;
 
   // History, Saved Queries, Snippets
@@ -463,18 +465,30 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   setInspectedTableMeta: (meta) => set({ inspectedTableMeta: meta }),
 
   consoleLogs: [],
-  addLog: (level, message, sql) =>
+  toasts: [],
+  addLog: (level, message, sql) => {
+    const entry: ConsoleLogEntry = {
+      id: makeId(),
+      timestamp: new Date().toLocaleTimeString(),
+      level,
+      message,
+      sql,
+    };
     set((s) => ({
-      consoleLogs: [
-        {
-          id: makeId(),
-          timestamp: new Date().toLocaleTimeString(),
-          level,
-          message,
-          sql,
-        },
-        ...s.consoleLogs.slice(0, 199),
-      ],
+      consoleLogs: [entry, ...s.consoleLogs.slice(0, 199)],
+      toasts: level === "error" ? [...s.toasts.slice(-3), entry] : s.toasts,
+    }));
+    if (level === "error") {
+      window.setTimeout(() => {
+        set((s) => ({
+          toasts: s.toasts.filter((t) => t.id !== entry.id),
+        }));
+      }, 7000);
+    }
+  },
+  dismissToast: (id) =>
+    set((s) => ({
+      toasts: s.toasts.filter((t) => t.id !== id),
     })),
   clearLogs: () => set({ consoleLogs: [] }),
 
