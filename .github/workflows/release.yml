@@ -70,6 +70,26 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Sync version from Git tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION#.}"
+          echo "Syncing version to ${VERSION}..."
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+            let cargo = fs.readFileSync("Cargo.toml", "utf8");
+            cargo = cargo.replace(/(\[workspace\.package\][\s\S]*?version\s*=\s*")[^"]+(")/, `$1${v}$2`);
+            fs.writeFileSync("Cargo.toml", cargo);
+          ' "$VERSION"
+
       - name: Build and upload DBa installers
         uses: tauri-apps/tauri-action@v0
         env:
