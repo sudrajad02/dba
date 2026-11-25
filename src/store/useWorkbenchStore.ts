@@ -10,7 +10,7 @@ import type {
   SavedQuery,
   SchemaInfo,
   TableMetadata,
-} from "../types/datavault";
+} from "../types/dba";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type SplitMode = "none" | "horizontal" | "vertical";

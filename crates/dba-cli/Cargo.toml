@@ -1,14 +1,14 @@
 [package]
-name = "datavault-cli"
+name = "dba-cli"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "datavault-cli"
+name = "dba-cli"
 path = "src/main.rs"
 
 [dependencies]
-datavault-core = { path = "../datavault-core" }
+dba-core = { path = "../dba-core" }
 tokio.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true

@@ -33,7 +33,7 @@ const COUNTRIES: &[&str] = &[
 ];
 
 const COMPANIES: &[&str] = &[
-    "Datavault Labs", "Nusantara Tech", "Aurora Systems", "Quantum Grid", "PixelForge",
+    "DBa Labs", "Nusantara Tech", "Aurora Systems", "Quantum Grid", "PixelForge",
     "Cobalt Cloud", "Meridian Data", "Vanguard Analytics", "Helios Digital", "Orbit Works",
 ];
 
@@ -48,7 +48,7 @@ const LOREM_WORDS: &[&str] = &[
     "minim", "veniam", "quis", "nostrud", "exercitation", "ullamco", "laboris", "nisi",
 ];
 
-const DOMAINS: &[&str] = &["example.com", "mail.test", "datavault.dev", "acme.io", "corp.org"];
+const DOMAINS: &[&str] = &["example.com", "mail.test", "dba.dev", "acme.io", "corp.org"];
 
 /// Fast deterministic PRNG (SplitMix64) with zero external crate dependencies.
 pub struct FastRng {

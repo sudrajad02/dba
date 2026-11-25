@@ -19,7 +19,7 @@ import type {
   StructureSyncPlan,
   SyncDiffStatus,
   SyncExecutionResult,
-} from "../types/datavault";
+} from "../types/dba";
 
 const STATUS_BADGE: Record<SyncDiffStatus, string> = {
   new: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",

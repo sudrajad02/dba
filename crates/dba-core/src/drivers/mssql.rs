@@ -2,7 +2,7 @@ use crate::drivers::{
     build_order_clause, build_staged_change_sql, build_where_clause, generate_table_design_ddl,
     is_compound_ddl, qualified_table, split_sql_statements, SqlDriver,
 };
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use async_trait::async_trait;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
@@ -95,7 +95,7 @@ impl MssqlDriver {
         }
 
         let tcp = TcpStream::connect(cfg.get_addr()).await.map_err(|e| {
-            DatavaultError::Database {
+            DbaError::Database {
                 message: format!("Failed to connect to SQL Server {}:{}: {}", self.host, self.port, e),
                 code: None,
                 detail: None,
@@ -114,9 +114,9 @@ impl MssqlDriver {
     }
 }
 
-fn map_mssql_error(err: tiberius::error::Error) -> DatavaultError {
+fn map_mssql_error(err: tiberius::error::Error) -> DbaError {
     match &err {
-        tiberius::error::Error::Server(srv) => DatavaultError::Database {
+        tiberius::error::Error::Server(srv) => DbaError::Database {
             message: srv.message().to_string(),
             code: Some(format!("MSSQL {}", srv.code())),
             detail: Some(format!(
@@ -126,7 +126,7 @@ fn map_mssql_error(err: tiberius::error::Error) -> DatavaultError {
             )),
             line: Some(srv.line()),
         },
-        _ => DatavaultError::Database {
+        _ => DbaError::Database {
             message: err.to_string(),
             code: None,
             detail: None,
@@ -1162,7 +1162,7 @@ impl SqlDriver for MssqlDriver {
                 let def = row
                     .and_then(|r| r.get::<&str, _>(0).map(|s| s.to_string()))
                     .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Object definition for '{}.{}' not found", sc, name),
                         code: None,
                         detail: None,
@@ -1170,7 +1170,7 @@ impl SqlDriver for MssqlDriver {
                     })?;
                 Ok(def)
             }
-            _ => Err(DatavaultError::UnsupportedEngine(format!(
+            _ => Err(DbaError::UnsupportedEngine(format!(
                 "MSSQL DDL extraction is not supported for {:?}",
                 kind
             ))),

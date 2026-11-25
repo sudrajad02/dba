@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/datavault-core",
-    "crates/datavault-cli",
+    "crates/dba-core",
+    "crates/dba-cli",
     "src-tauri",
 ]
 

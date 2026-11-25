@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Check, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
-import type { MongoCollectionMetadata } from "../types/datavault";
+import type { MongoCollectionMetadata } from "../types/dba";
 
 export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const { connections, openSafetyModal, addLog } = useWorkbenchStore();

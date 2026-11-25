@@ -19,7 +19,7 @@ import type {
   ChartDashboard,
   ChartType,
   QueryResultSet,
-} from "../types/datavault";
+} from "../types/dba";
 
 const SERIES_COLORS = [
   "#6366f1",

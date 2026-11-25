@@ -21,7 +21,7 @@ import type {
   DataJobResult,
   ImportErrorPolicy,
   SqlExportMode,
-} from "../types/datavault";
+} from "../types/dba";
 
 const FORMAT_OPTIONS: { value: DataFileFormat; label: string; ext: string }[] = [
   { value: "csv", label: "CSV (.csv)", ext: "csv" },

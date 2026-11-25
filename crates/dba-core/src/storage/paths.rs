@@ -1,9 +1,9 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
-pub struct DatavaultPaths {
+pub struct DbaPaths {
     pub data_dir: PathBuf,
     pub sqlite_db: PathBuf,
     pub workspace_dir: PathBuf,
@@ -15,16 +15,16 @@ pub struct DatavaultPaths {
     pub jobs_dir: PathBuf,
 }
 
-impl DatavaultPaths {
-    /// Follows Linux XDG Base Directory Specification (~/.local/share/datavault/)
+impl DbaPaths {
+    /// Follows Linux XDG Base Directory Specification (~/.local/share/dba/)
     pub fn resolve() -> Result<Self> {
         let base = dirs::data_local_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
-            .ok_or_else(|| DatavaultError::Storage("Cannot resolve XDG data directory".into()))?;
-        let data_dir = base.join("datavault");
+            .ok_or_else(|| DbaError::Storage("Cannot resolve XDG data directory".into()))?;
+        let data_dir = base.join("dba");
         let workspace_dir = data_dir.join("workspace");
         Ok(Self {
-            sqlite_db: data_dir.join("datavault.db"),
+            sqlite_db: data_dir.join("dba.db"),
             connections_file: workspace_dir.join("connections.json"),
             queries_dir: workspace_dir.join("queries"),
             snippets_dir: workspace_dir.join("snippets"),

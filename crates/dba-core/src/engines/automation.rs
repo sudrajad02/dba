@@ -1,4 +1,4 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::manager::ConnectionManager;
 use crate::models::*;
 use chrono::Utc;
@@ -27,23 +27,23 @@ pub fn safe_unit_suffix(job_id: &str) -> String {
 }
 
 pub fn systemd_unit_base(job_id: &str) -> String {
-    format!("datavault-job-{}", safe_unit_suffix(job_id))
+    format!("dba-job-{}", safe_unit_suffix(job_id))
 }
 
 /// Resolves ~/.config/systemd/user directory on Linux.
 pub fn systemd_user_dir() -> Result<PathBuf> {
     let base = dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
-        .ok_or_else(|| DatavaultError::Storage("Cannot resolve XDG config directory".into()))?;
+        .ok_or_else(|| DbaError::Storage("Cannot resolve XDG config directory".into()))?;
     Ok(base.join("systemd").join("user"))
 }
 
-/// Locates the datavault-cli executable (beside current binary, in PATH, or fallback name).
+/// Locates the dba-cli executable (beside current binary, in PATH, or fallback name).
 pub fn resolve_cli_binary() -> String {
     let bin_name = if cfg!(windows) {
-        "datavault-cli.exe"
+        "dba-cli.exe"
     } else {
-        "datavault-cli"
+        "dba-cli"
     };
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -66,7 +66,7 @@ pub fn resolve_cli_binary() -> String {
 
 pub fn render_systemd_service(job_id: &str, job_name: &str, cli_binary: &str) -> String {
     format!(
-        "[Unit]\nDescription=Datavault Batch Job: {}\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart={} run-job {}\n",
+        "[Unit]\nDescription=DBa Batch Job: {}\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart={} run-job {}\n",
         job_name.replace('\n', " "),
         cli_binary,
         job_id
@@ -80,14 +80,14 @@ pub fn render_systemd_timer(job_id: &str, job_name: &str, on_calendar: &str) -> 
         on_calendar.trim()
     };
     format!(
-        "[Unit]\nDescription=Datavault Schedule Timer: {}\n\n[Timer]\nOnCalendar={}\nPersistent=true\nUnit={}.service\n\n[Install]\nWantedBy=timers.target\n",
+        "[Unit]\nDescription=DBa Schedule Timer: {}\n\n[Timer]\nOnCalendar={}\nPersistent=true\nUnit={}.service\n\n[Install]\nWantedBy=timers.target\n",
         job_name.replace('\n', " "),
         cal,
         systemd_unit_base(job_id)
     )
 }
 
-/// Installs or updates ~/.config/systemd/user/datavault-job-<id>.{service,timer} and enables the timer (Linux only).
+/// Installs or updates ~/.config/systemd/user/dba-job-<id>.{service,timer} and enables the timer (Linux only).
 pub fn sync_systemd_timer(job: &BatchJob) -> Result<SystemdTimerStatus> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -100,7 +100,7 @@ pub fn sync_systemd_timer(job: &BatchJob) -> Result<SystemdTimerStatus> {
             enabled: false,
             active: false,
             next_trigger: None,
-            message: "Automatic systemd scheduling is only supported on Linux. Run jobs manually or via datavault-cli.".into(),
+            message: "Automatic systemd scheduling is only supported on Linux. Run jobs manually or via dba-cli.".into(),
         });
     }
 
@@ -387,7 +387,7 @@ pub async fn run_batch_job(
                     .unwrap_or_default()
                     .to_string();
                 if conn_id.is_empty() || sql.trim().is_empty() {
-                    Err(DatavaultError::Storage(
+                    Err(DbaError::Storage(
                         "RunQuery step requires connectionId and sql".into(),
                     ))
                 } else {
@@ -404,30 +404,30 @@ pub async fn run_batch_job(
             }
             BatchStepKind::SqlDump => {
                 let req: SqlDumpRequest = serde_json::from_value(step.config.clone())
-                    .map_err(|e| DatavaultError::Storage(format!("Invalid SqlDump config: {}", e)))?;
+                    .map_err(|e| DbaError::Storage(format!("Invalid SqlDump config: {}", e)))?;
                 manager.ensure_connected(&req.connection_id).await?;
                 let res = manager.dump_sql(&req).await?;
                 if res.ok {
                     Ok(res.summary)
                 } else {
-                    Err(DatavaultError::Storage(res.summary))
+                    Err(DbaError::Storage(res.summary))
                 }
             }
             BatchStepKind::ExportTable => {
                 let req: ExportRequest = serde_json::from_value(step.config.clone())
-                    .map_err(|e| DatavaultError::Storage(format!("Invalid Export config: {}", e)))?;
+                    .map_err(|e| DbaError::Storage(format!("Invalid Export config: {}", e)))?;
                 manager.ensure_connected(&req.connection_id).await?;
                 let res = manager.export_table_data(&req).await?;
                 if res.ok {
                     Ok(res.summary)
                 } else {
-                    Err(DatavaultError::Storage(res.summary))
+                    Err(DbaError::Storage(res.summary))
                 }
             }
             BatchStepKind::DataTransfer => {
                 let mut req: DataTransferRequest = serde_json::from_value(step.config.clone())
                     .map_err(|e| {
-                        DatavaultError::Storage(format!("Invalid DataTransfer config: {}", e))
+                        DbaError::Storage(format!("Invalid DataTransfer config: {}", e))
                     })?;
                 req.confirmed_production = true;
                 manager.ensure_connected(&req.source_connection_id).await?;
@@ -436,13 +436,13 @@ pub async fn run_batch_job(
                 if res.ok {
                     Ok(res.summary)
                 } else {
-                    Err(DatavaultError::Storage(res.summary))
+                    Err(DbaError::Storage(res.summary))
                 }
             }
             BatchStepKind::StructureSync => {
                 let req: StructureSyncRequest = serde_json::from_value(step.config.clone())
                     .map_err(|e| {
-                        DatavaultError::Storage(format!("Invalid StructureSync config: {}", e))
+                        DbaError::Storage(format!("Invalid StructureSync config: {}", e))
                     })?;
                 manager.ensure_connected(&req.source_connection_id).await?;
                 manager.ensure_connected(&req.target_connection_id).await?;
@@ -467,14 +467,14 @@ pub async fn run_batch_job(
                     if exec_res.ok {
                         Ok(exec_res.summary)
                     } else {
-                        Err(DatavaultError::Storage(exec_res.summary))
+                        Err(DbaError::Storage(exec_res.summary))
                     }
                 }
             }
             BatchStepKind::DataSync => {
                 let req: DataSyncRequest = serde_json::from_value(step.config.clone())
                     .map_err(|e| {
-                        DatavaultError::Storage(format!("Invalid DataSync config: {}", e))
+                        DbaError::Storage(format!("Invalid DataSync config: {}", e))
                     })?;
                 manager.ensure_connected(&req.source_connection_id).await?;
                 manager.ensure_connected(&req.target_connection_id).await?;
@@ -499,20 +499,20 @@ pub async fn run_batch_job(
                     if exec_res.ok {
                         Ok(exec_res.summary)
                     } else {
-                        Err(DatavaultError::Storage(exec_res.summary))
+                        Err(DbaError::Storage(exec_res.summary))
                     }
                 }
             }
             BatchStepKind::DataGen => {
                 let mut req: DataGenRequest = serde_json::from_value(step.config.clone())
-                    .map_err(|e| DatavaultError::Storage(format!("Invalid DataGen config: {}", e)))?;
+                    .map_err(|e| DbaError::Storage(format!("Invalid DataGen config: {}", e)))?;
                 req.confirmed_production = true;
                 manager.ensure_connected(&req.connection_id).await?;
                 let res = manager.run_data_gen(&req).await?;
                 if res.ok {
                     Ok(res.summary)
                 } else {
-                    Err(DatavaultError::Storage(res.error.unwrap_or(res.summary)))
+                    Err(DbaError::Storage(res.error.unwrap_or(res.summary)))
                 }
             }
         };
@@ -550,14 +550,14 @@ pub async fn run_batch_job(
     if send_notify {
         if all_ok && job.schedule.notify_on_success {
             send_desktop_notification(
-                &format!("Datavault Job Succeeded: {}", job.name),
+                &format!("DBa Job Succeeded: {}", job.name),
                 &format!("Completed {} step(s) successfully.", job.steps.len()),
                 false,
             );
         } else if !all_ok && job.schedule.notify_on_failure {
             send_desktop_notification(
-                &format!("Datavault Job Failed: {}", job.name),
-                "One or more steps failed. Check Datavault Automation logs.",
+                &format!("DBa Job Failed: {}", job.name),
+                "One or more steps failed. Check DBa Automation logs.",
                 true,
             );
         }
@@ -572,14 +572,14 @@ mod tests {
 
     #[test]
     fn renders_valid_systemd_service_and_timer_units() {
-        let svc = render_systemd_service("job 123/abc", "Nightly Backup", "/usr/bin/datavault-cli");
-        assert!(svc.contains("Description=Datavault Batch Job: Nightly Backup"));
-        assert!(svc.contains("ExecStart=/usr/bin/datavault-cli run-job job 123/abc"));
+        let svc = render_systemd_service("job 123/abc", "Nightly Backup", "/usr/bin/dba-cli");
+        assert!(svc.contains("Description=DBa Batch Job: Nightly Backup"));
+        assert!(svc.contains("ExecStart=/usr/bin/dba-cli run-job job 123/abc"));
         assert!(svc.contains("Type=oneshot"));
 
         let tmr = render_systemd_timer("job 123/abc", "Nightly Backup", "*-*-* 02:30:00");
         assert!(tmr.contains("OnCalendar=*-*-* 02:30:00"));
-        assert!(tmr.contains("Unit=datavault-job-job-123-abc.service"));
+        assert!(tmr.contains("Unit=dba-job-job-123-abc.service"));
         assert!(tmr.contains("Persistent=true"));
     }
 

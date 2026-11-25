@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
-import type { MongoDocChange } from "../types/datavault";
+import type { MongoDocChange } from "../types/dba";
 
 const JsonTreeNode: React.FC<{
   label: string;

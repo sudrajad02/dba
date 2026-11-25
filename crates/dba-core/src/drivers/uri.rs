@@ -1,4 +1,4 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::{DbEngine, ParsedConnectionUri, SslMode};
 use url::Url;
 
@@ -9,7 +9,7 @@ use url::Url;
 pub fn parse_connection_uri(raw: &str) -> Result<ParsedConnectionUri> {
     let trimmed = raw.trim();
     let parsed = Url::parse(trimmed)
-        .map_err(|e| DatavaultError::InvalidUri(format!("Failed to parse URI: {}", e)))?;
+        .map_err(|e| DbaError::InvalidUri(format!("Failed to parse URI: {}", e)))?;
 
     let engine = match parsed.scheme().to_lowercase().as_str() {
         "postgres" | "postgresql" => DbEngine::Postgres,
@@ -17,7 +17,7 @@ pub fn parse_connection_uri(raw: &str) -> Result<ParsedConnectionUri> {
         "mssql" | "sqlserver" => DbEngine::Mssql,
         "mongodb" | "mongodb+srv" => DbEngine::Mongodb,
         other => {
-            return Err(DatavaultError::InvalidUri(format!(
+            return Err(DbaError::InvalidUri(format!(
                 "Unsupported URI scheme '{}'",
                 other
             )))
@@ -26,7 +26,7 @@ pub fn parse_connection_uri(raw: &str) -> Result<ParsedConnectionUri> {
 
     let host = parsed
         .host_str()
-        .ok_or_else(|| DatavaultError::InvalidUri("Missing host in URI".into()))?
+        .ok_or_else(|| DbaError::InvalidUri("Missing host in URI".into()))?
         .to_string();
     let port = parsed.port().unwrap_or_else(|| engine.default_port());
     let username = percent_decode(parsed.username());

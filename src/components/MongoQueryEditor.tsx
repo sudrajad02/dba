@@ -19,7 +19,7 @@ import type {
   MongoAggregationStageResult,
   MongoQueryRequest,
   MongoQueryResponse,
-} from "../types/datavault";
+} from "../types/dba";
 
 const AGG_OPERATORS = [
   "$match",

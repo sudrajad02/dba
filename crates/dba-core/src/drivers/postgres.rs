@@ -2,7 +2,7 @@ use crate::drivers::{
     build_order_clause, build_staged_change_sql, build_where_clause, qualified_table, quote_ident,
     split_sql_statements, SqlDriver,
 };
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use async_trait::async_trait;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -94,15 +94,15 @@ impl PostgresDriver {
         if let Some(ref ca_path) = self.ssl.ca_cert_path {
             if !ca_path.trim().is_empty() {
                 let pem = fs::read(ca_path)
-                    .map_err(|e| DatavaultError::Tls(format!("Failed to read CA cert: {}", e)))?;
+                    .map_err(|e| DbaError::Tls(format!("Failed to read CA cert: {}", e)))?;
                 let cert = Certificate::from_pem(&pem)
-                    .map_err(|e| DatavaultError::Tls(format!("Invalid CA cert PEM: {}", e)))?;
+                    .map_err(|e| DbaError::Tls(format!("Invalid CA cert PEM: {}", e)))?;
                 builder.add_root_certificate(cert);
             }
         }
         let connector = builder
             .build()
-            .map_err(|e| DatavaultError::Tls(format!("Failed to build TLS connector: {}", e)))?;
+            .map_err(|e| DbaError::Tls(format!("Failed to build TLS connector: {}", e)))?;
         Ok(Some(MakeTlsConnector::new(connector)))
     }
 
@@ -155,9 +155,9 @@ impl PostgresDriver {
     }
 }
 
-fn map_pg_error(err: tokio_postgres::Error) -> DatavaultError {
+fn map_pg_error(err: tokio_postgres::Error) -> DbaError {
     if let Some(db_err) = err.as_db_error() {
-        DatavaultError::Database {
+        DbaError::Database {
             message: db_err.message().to_string(),
             code: Some(db_err.code().code().to_string()),
             detail: db_err.detail().map(|s| s.to_string()),
@@ -167,7 +167,7 @@ fn map_pg_error(err: tokio_postgres::Error) -> DatavaultError {
             }),
         }
     } else {
-        DatavaultError::Database {
+        DbaError::Database {
             message: err.to_string(),
             code: None,
             detail: None,
@@ -1101,7 +1101,7 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("View '{}' not found", name),
                         code: None,
                         detail: None,
@@ -1121,7 +1121,7 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Materialized view '{}' not found", name),
                         code: None,
                         detail: None,
@@ -1142,7 +1142,7 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Routine '{}' not found", name),
                         code: None,
                         detail: None,
@@ -1164,7 +1164,7 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Trigger '{}' not found", name),
                         code: None,
                         detail: None,
@@ -1183,7 +1183,7 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Sequence '{}' not found", name),
                         code: None,
                         detail: None,
@@ -1213,14 +1213,14 @@ impl SqlDriver for PostgresDriver {
                     )
                     .await
                     .map_err(map_pg_error)?
-                    .ok_or_else(|| DatavaultError::Database {
+                    .ok_or_else(|| DbaError::Database {
                         message: format!("Enum type '{}' not found", name),
                         code: None,
                         detail: None,
                         line: None,
                     })?;
                 let labels: Option<String> = row.get(0);
-                let labels = labels.ok_or_else(|| DatavaultError::Database {
+                let labels = labels.ok_or_else(|| DbaError::Database {
                     message: format!("Enum type '{}' has no labels", name),
                     code: None,
                     detail: None,
@@ -1228,7 +1228,7 @@ impl SqlDriver for PostgresDriver {
                 })?;
                 Ok(format!("CREATE TYPE {} AS ENUM ({});", fq, labels))
             }
-            _ => Err(DatavaultError::UnsupportedEngine(format!(
+            _ => Err(DbaError::UnsupportedEngine(format!(
                 "PostgreSQL DDL extraction is not supported for {:?}",
                 kind
             ))),

@@ -27,7 +27,7 @@ import type {
   ErRelationship,
   ErTableNode,
   StructureSyncPlan,
-} from "../types/datavault";
+} from "../types/dba";
 
 const CARD_WIDTH = 250;
 const HEADER_H = 34;

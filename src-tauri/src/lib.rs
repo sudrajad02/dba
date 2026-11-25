@@ -1,7 +1,7 @@
-use datavault_core::drivers::generate_table_design_ddl;
-use datavault_core::drivers::uri::parse_connection_uri;
-use datavault_core::error::SerializableError;
-use datavault_core::*;
+use dba_core::drivers::generate_table_design_ddl;
+use dba_core::drivers::uri::parse_connection_uri;
+use dba_core::error::SerializableError;
+use dba_core::*;
 use std::sync::Arc;
 use tauri::State;
 
@@ -846,7 +846,7 @@ async fn run_batch_job(
         .get_batch_job(&job_id)
         .map_err(SerializableError::from)?
         .ok_or_else(|| {
-            SerializableError::from(datavault_core::DatavaultError::Storage(format!(
+            SerializableError::from(dba_core::DbaError::Storage(format!(
                 "Batch job '{}' not found",
                 job_id
             )))
@@ -920,7 +920,7 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "datavault_core=info,datavault_tauri=info".into()),
+                .unwrap_or_else(|_| "dba_core=info,dba_tauri=info".into()),
         )
         .init();
 

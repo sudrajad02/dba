@@ -15,7 +15,7 @@ import type {
   DataGenGeneratorKind,
   DataGenPreviewResult,
   DataGenResult,
-} from "../types/datavault";
+} from "../types/dba";
 
 const GENERATOR_OPTIONS: { value: DataGenGeneratorKind; label: string }[] = [
   { value: "auto_increment_skip", label: "Auto-Increment (Skip)" },

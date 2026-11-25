@@ -71,7 +71,7 @@ pub trait SqlDriver: Send + Sync {
         kind: ObjectKind,
     ) -> Result<String> {
         let _ = (database, schema, name, kind);
-        Err(crate::error::DatavaultError::UnsupportedEngine(
+        Err(crate::error::DbaError::UnsupportedEngine(
             "DDL extraction is not supported for this object/engine".into(),
         ))
     }

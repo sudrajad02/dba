@@ -1,4 +1,4 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::{SshAuthMethod, SshConfig};
 use std::net::TcpListener;
 use std::time::Duration;
@@ -20,10 +20,10 @@ impl SshTunnel {
         _secret: Option<&str>,
     ) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| DatavaultError::SshTunnel(format!("Failed to bind local port: {}", e)))?;
+            .map_err(|e| DbaError::SshTunnel(format!("Failed to bind local port: {}", e)))?;
         let local_port = listener
             .local_addr()
-            .map_err(|e| DatavaultError::SshTunnel(e.to_string()))?
+            .map_err(|e| DbaError::SshTunnel(e.to_string()))?
             .port();
         drop(listener);
 
@@ -66,13 +66,13 @@ impl SshTunnel {
         cmd.arg(&target).kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(|e| {
-            DatavaultError::SshTunnel(format!("Failed to launch SSH tunnel process: {}", e))
+            DbaError::SshTunnel(format!("Failed to launch SSH tunnel process: {}", e))
         })?;
 
         // Wait until local forwarded port is accepting connections
         for _ in 0..40 {
             if let Ok(Some(status)) = child.try_wait() {
-                return Err(DatavaultError::SshTunnel(format!(
+                return Err(DbaError::SshTunnel(format!(
                     "SSH tunnel exited early with status {}",
                     status
                 )));
@@ -87,7 +87,7 @@ impl SshTunnel {
         }
 
         let _ = child.kill().await;
-        Err(DatavaultError::SshTunnel(
+        Err(DbaError::SshTunnel(
             "Timed out waiting for SSH tunnel to establish".into(),
         ))
     }

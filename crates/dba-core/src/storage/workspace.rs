@@ -2,17 +2,17 @@ use crate::error::Result;
 use crate::models::{
     BatchJob, ChartDashboard, CodeSnippet, ConnectionProfile, DataJobProfile, ErModel, SavedQuery,
 };
-use crate::storage::paths::DatavaultPaths;
+use crate::storage::paths::DbaPaths;
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::Path;
 
 pub struct WorkspaceStore {
-    paths: DatavaultPaths,
+    paths: DbaPaths,
 }
 
 impl WorkspaceStore {
-    pub fn new(paths: DatavaultPaths) -> Self {
+    pub fn new(paths: DbaPaths) -> Self {
         Self { paths }
     }
 

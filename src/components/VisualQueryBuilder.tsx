@@ -21,7 +21,7 @@ import type {
   QbWhereCondition,
   QueryResultSet,
   TableMetadata,
-} from "../types/datavault";
+} from "../types/dba";
 
 const CARD_W = 220;
 const HEADER_H = 30;

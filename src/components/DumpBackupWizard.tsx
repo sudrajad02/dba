@@ -18,7 +18,7 @@ import type {
   ImportErrorPolicy,
   NativeCliRunResult,
   NativeCliToolInfo,
-} from "../types/datavault";
+} from "../types/dba";
 
 export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const {

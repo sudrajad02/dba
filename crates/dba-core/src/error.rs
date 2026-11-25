@@ -2,7 +2,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum DatavaultError {
+pub enum DbaError {
     #[error("Connection not found: {0}")]
     ConnectionNotFound(String),
 
@@ -63,10 +63,10 @@ pub struct SerializableError {
     pub line: Option<u32>,
 }
 
-impl From<DatavaultError> for SerializableError {
-    fn from(err: DatavaultError) -> Self {
+impl From<DbaError> for SerializableError {
+    fn from(err: DbaError) -> Self {
         match err {
-            DatavaultError::Database {
+            DbaError::Database {
                 message,
                 code,
                 detail,
@@ -78,21 +78,21 @@ impl From<DatavaultError> for SerializableError {
                 detail,
                 line,
             },
-            DatavaultError::ReadOnlyBlocked(msg) => SerializableError {
+            DbaError::ReadOnlyBlocked(msg) => SerializableError {
                 kind: "read_only".into(),
                 message: msg,
                 code: None,
                 detail: None,
                 line: None,
             },
-            DatavaultError::SafetyGuardBlocked(msg) => SerializableError {
+            DbaError::SafetyGuardBlocked(msg) => SerializableError {
                 kind: "safety_guard".into(),
                 message: msg,
                 code: None,
                 detail: None,
                 line: None,
             },
-            DatavaultError::Cancelled => SerializableError {
+            DbaError::Cancelled => SerializableError {
                 kind: "cancelled".into(),
                 message: "Query was cancelled by user".into(),
                 code: None,
@@ -110,4 +110,4 @@ impl From<DatavaultError> for SerializableError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, DatavaultError>;
+pub type Result<T> = std::result::Result<T, DbaError>;

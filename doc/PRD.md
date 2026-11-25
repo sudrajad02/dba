@@ -1,4 +1,4 @@
-# Product Requirements Document (PRD) — Datavault
+# Product Requirements Document (PRD) — DBa
 
 > **Status:** Complete Implementation (Phase 1–5 Selesai ✅)  
 > **Target Pengguna:** Personal Daily-Driver (Single-User, Local-First, Linux-First)  
@@ -8,7 +8,7 @@
 
 ## 1. Ringkasan Eksekutif & Tujuan
 
-**Datavault** dirancang sebagai pengganti pribadi Navicat Premium di desktop Linux yang:
+**DBa** dirancang sebagai pengganti pribadi Navicat Premium di desktop Linux yang:
 1. **Ringan & Cepat (Native Feel):** Memanfaatkan Rust untuk manajemen koneksi, driver database, streaming data besar, SSH tunneling, dan background automation — menghindari beban RAM tinggi ala Electron dan masalah rendering GTK/Wine di Linux.
 2. **Paritas Fitur Penuh Navicat Premium:** Mencakup 4 pilar workbench inti (*Object Explorer*, *Data Viewer/Editor*, *Query Editor*, *Object Designer*) dan 8 *power features* utama (*Import/Export & Dump*, *Structure/Data Sync*, *Data Transfer*, *Visual ER Diagram*, *Visual Query Builder*, *Automation/Scheduler*, *Charts*, *Data Generation*).
 3. **Dual-Paradigm Engine:** Mendukung database **Relational SQL** (PostgreSQL, MySQL/MariaDB, MSSQL) dan **Document NoSQL** (MongoDB) dalam satu antarmuka yang kohesif.
@@ -26,7 +26,7 @@
 
 ### 2.1 High-Level Architecture
 
-Datavault menggunakan struktur **Rust Workspace (Monorepo)** agar seluruh logika koneksi, driver, transfer, sync, dan backup bisa dipakai bersama oleh **Desktop GUI (Tauri)** dan **Headless CLI Runner (`datavault-cli`)** untuk scheduled jobs.
+DBa menggunakan struktur **Rust Workspace (Monorepo)** agar seluruh logika koneksi, driver, transfer, sync, dan backup bisa dipakai bersama oleh **Desktop GUI (Tauri)** dan **Headless CLI Runner (`dba-cli`)** untuk scheduled jobs.
 
 ```mermaid
 flowchart TD
@@ -42,7 +42,7 @@ flowchart TD
         IPC["Tauri Commands & Streaming Events"]
     end
 
-    subgraph CORE["Rust Shared Core (datavault-core)"]
+    subgraph CORE["Rust Shared Core (dba-core)"]
         CONN["Connection Pool & SSH/SSL Manager"]
         DRV["Unified Driver Traits (SqlDriver & DocDriver)"]
         ENG["Engines: Export/Import, Sync, Transfer, DataGen, Dump"]
@@ -50,7 +50,7 @@ flowchart TD
     end
 
     subgraph CLI["Headless Automation"]
-        RUNNER["datavault-cli (run-job)"]
+        RUNNER["dba-cli (run-job)"]
         SYSD["Linux systemd --user Timers"]
     end
 
@@ -169,7 +169,7 @@ flowchart TD
 - **Batch Jobs:** Gabungkan satu atau lebih tugas (Backup/Dump, Export, Data Transfer, Structure/Data Sync, atau Run Saved Query) ke dalam satu *Batch Job* berurutan dengan aturan stop/continue saat error.
 - **Headless Rust CLI Runner + Linux `systemd --user` Timers:**
   - GUI menyediakan *Schedule Builder* (Cron / Daily / Weekly / Interval).
-  - Saat jadwal disimpan, Datavault secara otomatis men-generate unit `.service` dan `.timer` di `~/.config/systemd/user/` yang memanggil `datavault-cli run-job <job_id>` (dan menjalankannya dengan `systemctl --user enable --now`).
+  - Saat jadwal disimpan, DBa secara otomatis men-generate unit `.service` dan `.timer` di `~/.config/systemd/user/` yang memanggil `dba-cli run-job <job_id>` (dan menjalankannya dengan `systemctl --user enable --now`).
   - **Keunggulan:** Jadwal berjalan mulus walau GUI ditutup, **0 MB RAM saat idle**, mengakses kredensial dari OS Keyring secara aman, menulis hasil ke SQLite execution log, dan mengirim notifikasi desktop Linux (`notify-send` / D-Bus) saat job selesai atau gagal.
 
 ### 4.7 Charts / Data Visualization
@@ -200,8 +200,8 @@ flowchart TD
 Lokasi penyimpanan mengikuti standar **XDG Base Directory Specification** di Linux:
 
 ```text
-~/.local/share/datavault/
-├── datavault.db              # SQLite lokal (Query History + FTS5, Job Logs, Schema Cache, App State)
+~/.local/share/dba/
+├── dba.db              # SQLite lokal (Query History + FTS5, Job Logs, Schema Cache, App State)
 └── workspace/                # Folder ramah Git / Syncthing (100% tanpa password/secret)
     ├── connections.json      # Metadata koneksi (host, port, user, ssh host, color tag, keyring_ref)
     ├── queries/              # Saved SQL & MQL files (.sql, .mongodb.js) terorganisir per folder
@@ -233,7 +233,7 @@ Lokasi penyimpanan mengikuti standar **XDG Base Directory Specification** di Lin
 Menggunakan pendekatan **Depth-First Core** agar aplikasi sudah produktif dipakai harian sejak akhir Phase 1.
 
 ### Phase 1 — Core Workbench (PostgreSQL + MySQL/MariaDB) *[MVP Daily Driver]* — ✅ Selesai
-- [x] Setup Rust Workspace (`datavault-core`, `datavault-tauri`, `datavault-cli`) + Frontend React/TS + Tauri v2.
+- [x] Setup Rust Workspace (`dba-core`, `dba-tauri`, `dba-cli`) + Frontend React/TS + Tauri v2.
 - [x] Hybrid Storage (SQLite + Workspace folder) + OS Keyring integration.
 - [x] Connection Manager lengkap: PostgreSQL & MySQL/MariaDB, SSH Tunnel, SSL/TLS, Connection Groups, Color Tags, Production Safety Guard (Read-Only + Konfirmasi).
 - [x] 3-Pane Modern Workbench UI, Dark/Light/System Theme, Command Palette (`Ctrl+K`).
@@ -259,7 +259,7 @@ Menggunakan pendekatan **Depth-First Core** agar aplikasi sudah produktif dipaka
 - [x] **Visual Query Builder** (drag-and-drop tables/joins + live SQL generation).
 
 ### Phase 5 — Automation, Analytics & Testing Utilities — ✅ Selesai
-- [x] **Batch Jobs & Scheduled Automation** via `datavault-cli` + integrasi otomatis `systemd --user` timers + riwayat log & Linux desktop notifications.
+- [x] **Batch Jobs & Scheduled Automation** via `dba-cli` + integrasi otomatis `systemd --user` timers + riwayat log & Linux desktop notifications.
 - [x] **Charts & Dashboard Builder** (Bar, Stacked Bar, Line, Area, Pie/Donut, Scatter, KPI Card; multi-chart dashboard terikat Saved Queries, export PNG/SVG).
 - [x] **Data Generation Engine** (FK-aware dummy/mock data generator dengan bulk-insert berkecepatan tinggi).
 
@@ -268,5 +268,5 @@ Menggunakan pendekatan **Depth-First Core** agar aplikasi sudah produktif dipaka
 ## 8. Langkah Selanjutnya
 
 Jika PRD ini sudah sesuai dengan visimu:
-1. Buka direktori `/home/angg/.gemini/antigravity/scratch/datavault/` sebagai active workspace.
+1. Buka direktori `/home/angg/.gemini/antigravity/scratch/dba/` sebagai active workspace.
 2. Verifikasi toolchain lokal (Rust/Cargo, Node/pnpm, Tauri Linux dependencies seperti `webkit2gtk`) sebelum memulai **Phase 1**.

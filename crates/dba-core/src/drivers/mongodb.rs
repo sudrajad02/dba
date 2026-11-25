@@ -1,5 +1,5 @@
 use crate::drivers::SqlDriver;
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use async_trait::async_trait;
 use futures::TryStreamExt;
@@ -361,7 +361,7 @@ impl MongoDriver {
                     summary: "Command executed".into(),
                 })
             }
-            other => Err(DatavaultError::Database {
+            other => Err(DbaError::Database {
                 message: format!("Unsupported MongoDB operation '{}'", other),
                 code: None,
                 detail: None,
@@ -610,8 +610,8 @@ fn mongo_stage_to_node(stage: &serde_json::Value) -> ExplainNode {
     }
 }
 
-fn map_mongo_error(err: mongodb::error::Error) -> DatavaultError {
-    DatavaultError::Database {
+fn map_mongo_error(err: mongodb::error::Error) -> DbaError {
+    DbaError::Database {
         message: err.to_string(),
         code: None,
         detail: None,
@@ -624,7 +624,7 @@ fn url_encode(s: &str) -> String {
 }
 
 fn json_value_to_bson(val: &serde_json::Value) -> Result<Bson> {
-    Bson::try_from(val.clone()).map_err(|e| DatavaultError::Database {
+    Bson::try_from(val.clone()).map_err(|e| DbaError::Database {
         message: format!("Failed to convert JSON to BSON: {}", e),
         code: None,
         detail: None,
@@ -635,7 +635,7 @@ fn json_value_to_bson(val: &serde_json::Value) -> Result<Bson> {
 fn json_value_to_doc(val: &serde_json::Value) -> Result<Document> {
     match json_value_to_bson(val)? {
         Bson::Document(d) => Ok(d),
-        _ => Err(DatavaultError::Database {
+        _ => Err(DbaError::Database {
             message: "Expected a JSON object document".into(),
             code: None,
             detail: None,
@@ -668,7 +668,7 @@ fn parse_json_pipeline(raw: Option<&str>) -> Result<Vec<Document>> {
         return Ok(Vec::new());
     }
     let val: serde_json::Value = serde_json::from_str(s)?;
-    let arr = val.as_array().ok_or_else(|| DatavaultError::Database {
+    let arr = val.as_array().ok_or_else(|| DbaError::Database {
         message: "Aggregation pipeline must be a JSON array of stage objects".into(),
         code: None,
         detail: None,
@@ -923,7 +923,7 @@ impl SqlDriver for MongoDriver {
     }
 
     async fn apply_staged_changes(&self, _req: &ApplyChangesRequest) -> Result<u64> {
-        Err(DatavaultError::UnsupportedEngine(
+        Err(DbaError::UnsupportedEngine(
             "Use mongo_apply_document_changes for MongoDB collections".into(),
         ))
     }

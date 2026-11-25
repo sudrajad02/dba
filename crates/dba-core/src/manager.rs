@@ -9,7 +9,7 @@ use crate::engines::{
     automation, data_gen, data_sync, dump, er_model, import_export, native_cli, structure_sync,
     transfer, JobCancelRegistry,
 };
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use crate::storage::StorageManager;
 use chrono::Utc;
@@ -207,7 +207,7 @@ impl ConnectionManager {
         let profile = self
             .storage
             .get_connection(connection_id)?
-            .ok_or_else(|| DatavaultError::ConnectionNotFound(connection_id.to_string()))?;
+            .ok_or_else(|| DbaError::ConnectionNotFound(connection_id.to_string()))?;
 
         let (driver, mongo, tunnel) = self.build_driver(&profile, None, None).await?;
         let version = driver.server_version().await.ok();
@@ -250,7 +250,7 @@ impl ConnectionManager {
         let map = self.active.read().await;
         let conn = map
             .get(connection_id)
-            .ok_or_else(|| DatavaultError::NotConnected(connection_id.to_string()))?;
+            .ok_or_else(|| DbaError::NotConnected(connection_id.to_string()))?;
         Ok((conn.profile.clone(), conn.driver.clone()))
     }
 
@@ -298,7 +298,7 @@ impl ConnectionManager {
         let profile = self
             .storage
             .get_connection(connection_id)?
-            .ok_or_else(|| DatavaultError::ConnectionNotFound(connection_id.to_string()))?;
+            .ok_or_else(|| DbaError::ConnectionNotFound(connection_id.to_string()))?;
         Ok(evaluate_sql_safety(&profile, sql))
     }
 
@@ -314,10 +314,10 @@ impl ConnectionManager {
         let safety = evaluate_sql_safety(&profile, sql);
 
         if !safety.allowed {
-            return Err(DatavaultError::ReadOnlyBlocked(safety.warnings.join("; ")));
+            return Err(DbaError::ReadOnlyBlocked(safety.warnings.join("; ")));
         }
         if safety.requires_confirmation && !confirmed_safety {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 safety.warnings.join("; "),
             ));
         }
@@ -383,7 +383,7 @@ impl ConnectionManager {
     pub async fn preview_staged_changes(&self, req: &ApplyChangesRequest) -> Result<PreviewChangesResponse> {
         let (profile, _) = self.get_active(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
@@ -412,12 +412,12 @@ impl ConnectionManager {
     pub async fn apply_staged_changes(&self, req: &ApplyChangesRequest) -> Result<u64> {
         let (profile, drv) = self.get_active(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before applying changes".into(),
             ));
         }
@@ -443,12 +443,12 @@ impl ConnectionManager {
     ) -> Result<()> {
         let (profile, drv) = self.get_active(connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !confirmed_safety {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before executing DDL".into(),
             ));
         }
@@ -465,10 +465,10 @@ impl ConnectionManager {
     ) -> Result<()> {
         let (profile, drv) = self.get_active(connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         if !confirmed {
-            return Err(DatavaultError::SafetyGuardBlocked("Confirmation required for TRUNCATE".into()));
+            return Err(DbaError::SafetyGuardBlocked("Confirmation required for TRUNCATE".into()));
         }
         drv.truncate_table(database, schema, table).await
     }
@@ -484,10 +484,10 @@ impl ConnectionManager {
     ) -> Result<()> {
         let (profile, drv) = self.get_active(connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         if !confirmed {
-            return Err(DatavaultError::SafetyGuardBlocked("Confirmation required for DROP".into()));
+            return Err(DbaError::SafetyGuardBlocked("Confirmation required for DROP".into()));
         }
         drv.drop_object(database, schema, name, kind).await
     }
@@ -503,7 +503,7 @@ impl ConnectionManager {
     ) -> Result<()> {
         let (profile, drv) = self.get_active(connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         drv.duplicate_table(database, schema, source, target, with_data)
             .await
@@ -532,9 +532,9 @@ impl ConnectionManager {
         let map = self.active.read().await;
         let conn = map
             .get(connection_id)
-            .ok_or_else(|| DatavaultError::NotConnected(connection_id.to_string()))?;
+            .ok_or_else(|| DbaError::NotConnected(connection_id.to_string()))?;
         let mg = conn.mongo.clone().ok_or_else(|| {
-            DatavaultError::UnsupportedEngine("Connection is not a MongoDB instance".into())
+            DbaError::UnsupportedEngine("Connection is not a MongoDB instance".into())
         })?;
         Ok((conn.profile.clone(), mg))
     }
@@ -557,12 +557,12 @@ impl ConnectionManager {
     pub async fn mongo_apply_document_changes(&self, req: &MongoApplyChangesRequest) -> Result<u64> {
         let (profile, mg) = self.get_active_mongo(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before modifying MongoDB documents".into(),
             ));
         }
@@ -576,12 +576,12 @@ impl ConnectionManager {
             "insertOne" | "updateMany" | "deleteMany" | "command"
         );
         if profile.read_only && is_write {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if is_write && profile.environment == EnvironmentTag::Production && !req.confirmed_safety {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 format!("Production confirmation required for MongoDB '{}'", req.operation),
             ));
         }
@@ -636,7 +636,7 @@ impl ConnectionManager {
     pub async fn mongo_create_index(&self, req: &MongoCreateIndexRequest) -> Result<String> {
         let (profile, mg) = self.get_active_mongo(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         mg.create_index(req).await
     }
@@ -650,7 +650,7 @@ impl ConnectionManager {
     ) -> Result<()> {
         let (profile, mg) = self.get_active_mongo(connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         mg.drop_index(database, collection, index_name).await
     }
@@ -658,10 +658,10 @@ impl ConnectionManager {
     pub async fn mongo_update_validation(&self, req: &MongoValidationUpdateRequest) -> Result<()> {
         let (profile, mg) = self.get_active_mongo(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked("Read-only mode enabled".into()));
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before updating collection validation".into(),
             ));
         }
@@ -709,16 +709,16 @@ impl ConnectionManager {
             let map = self.active.read().await;
             let conn = map
                 .get(&req.connection_id)
-                .ok_or_else(|| DatavaultError::NotConnected(req.connection_id.clone()))?;
+                .ok_or_else(|| DbaError::NotConnected(req.connection_id.clone()))?;
             (conn.profile.clone(), conn.driver.clone(), conn.mongo.clone())
         };
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before importing data".into(),
             ));
         }
@@ -751,12 +751,12 @@ impl ConnectionManager {
     pub async fn execute_sql_file(&self, req: &ExecuteSqlFileRequest) -> Result<DataJobResult> {
         let (profile, drv) = self.get_active(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before executing SQL file".into(),
             ));
         }
@@ -779,14 +779,14 @@ impl ConnectionManager {
         let profile = self
             .storage
             .get_connection(&req.connection_id)?
-            .ok_or_else(|| DatavaultError::ConnectionNotFound(req.connection_id.clone()))?;
+            .ok_or_else(|| DbaError::ConnectionNotFound(req.connection_id.clone()))?;
 
         let is_restore = matches!(
             req.tool.as_str(),
             "pg_restore" | "psql" | "mysql" | "mongorestore"
         );
         if is_restore && profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Connection is in Read-Only Mode".into(),
             ));
         }
@@ -794,7 +794,7 @@ impl ConnectionManager {
             && profile.environment == EnvironmentTag::Production
             && !req.confirmed_production
         {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before running native restore".into(),
             ));
         }
@@ -820,17 +820,17 @@ impl ConnectionManager {
             let map = self.active.read().await;
             let conn = map
                 .get(&req.target_connection_id)
-                .ok_or_else(|| DatavaultError::NotConnected(req.target_connection_id.clone()))?;
+                .ok_or_else(|| DbaError::NotConnected(req.target_connection_id.clone()))?;
             (conn.profile.clone(), conn.driver.clone(), conn.mongo.clone())
         };
 
         if tgt_profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Target connection is in Read-Only Mode".into(),
             ));
         }
         if tgt_profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before transferring data to target".into(),
             ));
         }
@@ -882,12 +882,12 @@ impl ConnectionManager {
     ) -> Result<SyncExecutionResult> {
         let (profile, drv) = self.get_active(&req.connection_id).await?;
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Target connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before applying sync script".into(),
             ));
         }
@@ -979,17 +979,17 @@ impl ConnectionManager {
             let map = self.active.read().await;
             let conn = map
                 .get(&req.connection_id)
-                .ok_or_else(|| DatavaultError::NotConnected(req.connection_id.clone()))?;
+                .ok_or_else(|| DbaError::NotConnected(req.connection_id.clone()))?;
             (conn.profile.clone(), conn.driver.clone(), conn.mongo.clone())
         };
 
         if profile.read_only {
-            return Err(DatavaultError::ReadOnlyBlocked(
+            return Err(DbaError::ReadOnlyBlocked(
                 "Target connection is in Read-Only Mode".into(),
             ));
         }
         if profile.environment == EnvironmentTag::Production && !req.confirmed_production {
-            return Err(DatavaultError::SafetyGuardBlocked(
+            return Err(DbaError::SafetyGuardBlocked(
                 "Production confirmation required before generating dummy data".into(),
             ));
         }

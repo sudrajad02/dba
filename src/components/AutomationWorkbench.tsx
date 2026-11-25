@@ -21,7 +21,7 @@ import type {
   JobExecutionLog,
   SchedulePreset,
   SystemdTimerStatus,
-} from "../types/datavault";
+} from "../types/dba";
 
 function makeId() {
   return typeof crypto !== "undefined" && crypto.randomUUID

@@ -2,7 +2,7 @@ use crate::drivers::{
     build_order_clause, build_staged_change_sql, build_where_clause, is_compound_ddl,
     qualified_table, quote_ident, split_sql_statements, SqlDriver,
 };
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use async_trait::async_trait;
 use mysql_async::prelude::*;
@@ -91,15 +91,15 @@ impl MysqlDriver {
     }
 }
 
-fn map_mysql_error(err: mysql_async::Error) -> DatavaultError {
+fn map_mysql_error(err: mysql_async::Error) -> DbaError {
     match &err {
-        mysql_async::Error::Server(srv) => DatavaultError::Database {
+        mysql_async::Error::Server(srv) => DbaError::Database {
             message: srv.message.clone(),
             code: Some(format!("{} ({})", srv.code, srv.state)),
             detail: None,
             line: None,
         },
-        _ => DatavaultError::Database {
+        _ => DbaError::Database {
             message: err.to_string(),
             code: None,
             detail: None,
@@ -204,7 +204,7 @@ impl SqlDriver for MysqlDriver {
     ) -> Result<Vec<DatabaseObject>> {
         let db = self
             .effective_db(database, schema)
-            .ok_or_else(|| DatavaultError::Database {
+            .ok_or_else(|| DbaError::Database {
                 message: "No database selected".into(),
                 code: None,
                 detail: None,
@@ -310,7 +310,7 @@ impl SqlDriver for MysqlDriver {
     ) -> Result<TableMetadata> {
         let db = self
             .effective_db(database, schema)
-            .ok_or_else(|| DatavaultError::Database {
+            .ok_or_else(|| DbaError::Database {
                 message: "No database selected".into(),
                 code: None,
                 detail: None,
@@ -803,7 +803,7 @@ impl SqlDriver for MysqlDriver {
             ObjectKind::Trigger => (format!("SHOW CREATE TRIGGER {}", fq), 2usize),
             ObjectKind::Event => (format!("SHOW CREATE EVENT {}", fq), 3usize),
             _ => {
-                return Err(DatavaultError::UnsupportedEngine(format!(
+                return Err(DbaError::UnsupportedEngine(format!(
                     "MySQL DDL extraction is not supported for {:?}",
                     kind
                 )))
@@ -811,7 +811,7 @@ impl SqlDriver for MysqlDriver {
         };
 
         let row: Option<mysql_async::Row> = conn.query_first(sql).await.map_err(map_mysql_error)?;
-        let row = row.ok_or_else(|| DatavaultError::Database {
+        let row = row.ok_or_else(|| DbaError::Database {
             message: format!("Object '{}' not found", name),
             code: None,
             detail: None,
@@ -821,7 +821,7 @@ impl SqlDriver for MysqlDriver {
         let raw_ddl: String = row
             .get_opt::<String, usize>(col_idx)
             .and_then(|r| r.ok())
-            .ok_or_else(|| DatavaultError::Database {
+            .ok_or_else(|| DbaError::Database {
                 message: format!("Failed to read DDL for '{}' (check permissions)", name),
                 code: None,
                 detail: None,

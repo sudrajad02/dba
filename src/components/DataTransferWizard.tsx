@@ -23,7 +23,7 @@ import type {
   TransferObjectSelection,
   TransferTableMode,
   TypeMappingRule,
-} from "../types/datavault";
+} from "../types/dba";
 
 const TRANSFERABLE_OBJECT_KINDS: ObjectKind[] = [
   "view",

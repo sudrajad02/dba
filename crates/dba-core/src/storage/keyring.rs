@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
-const SERVICE_NAME: &str = "dev.datavault.desktop";
+const SERVICE_NAME: &str = "dev.dba.desktop";
 
 /// Stores database passwords and SSH passphrases in Linux OS Keyring (Secret Service / KWallet).
 /// Falls back to a chmod 0600 local vault file outside the Git-friendly workspace directory

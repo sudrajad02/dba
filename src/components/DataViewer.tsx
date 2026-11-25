@@ -26,7 +26,7 @@ import type {
   QueryResultSet,
   SortSpec,
   StagedChange,
-} from "../types/datavault";
+} from "../types/dba";
 
 const FILTER_OPS = [
   "=",

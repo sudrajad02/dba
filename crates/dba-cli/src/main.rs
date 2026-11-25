@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use datavault_core::{ConnectionManager, StorageManager};
+use dba_core::{ConnectionManager, StorageManager};
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "datavault-cli", version, about = "Headless CLI runner for DBa")]
+#[command(name = "dba-cli", version, about = "Headless CLI runner for DBa")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

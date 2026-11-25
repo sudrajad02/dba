@@ -19,7 +19,7 @@ import type {
   EnvironmentTag,
   SshAuthMethod,
   SslMode,
-} from "../types/datavault";
+} from "../types/dba";
 
 const DEFAULT_PORTS: Record<DbEngine, number> = {
   postgres: 5432,

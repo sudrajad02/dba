@@ -1,7 +1,7 @@
 use crate::drivers::mongodb::MongoDriver;
 use crate::drivers::{qualified_table, quote_ident, sql_literal, SqlDriver};
 use crate::engines::xlsx::{read_xlsx, write_xlsx};
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use std::collections::HashMap;
 use std::fs::File;
@@ -150,7 +150,7 @@ pub async fn run_export(
         }
     } else if req.format == DataFileFormat::Sql {
         if let Some(w) = writer.as_mut() {
-            writeln!(w, "-- Datavault Export: {}", req.table)?;
+            writeln!(w, "-- DBa Export: {}", req.table)?;
             writeln!(w, "-- Format: {:?} ({:?})\n", req.format, req.sql_mode)?;
         }
     }
@@ -446,7 +446,7 @@ pub fn preview_import_file(req: &ImportPreviewRequest) -> Result<ImportPreviewRe
             let raw = std::fs::read_to_string(&req.file_path)?;
             let val: serde_json::Value = serde_json::from_str(&raw)?;
             let arr = val.as_array().ok_or_else(|| {
-                DatavaultError::Storage("JSON import file must contain a top-level array of objects".into())
+                DbaError::Storage("JSON import file must contain a top-level array of objects".into())
             })?;
             let mut col_set = Vec::new();
             for item in arr.iter().take(max_samples) {
@@ -547,7 +547,7 @@ pub fn preview_import_file(req: &ImportPreviewRequest) -> Result<ImportPreviewRe
                 detected_format: DataFileFormat::Xlsx,
             })
         }
-        DataFileFormat::Sql => Err(DatavaultError::Storage(
+        DataFileFormat::Sql => Err(DbaError::Storage(
             "Use 'Execute SQL File' for .sql scripts".into(),
         )),
     }
@@ -763,7 +763,7 @@ fn load_import_records(
             let raw = std::fs::read_to_string(&req.file_path)?;
             let val: serde_json::Value = serde_json::from_str(&raw)?;
             let arr = val.as_array().ok_or_else(|| {
-                DatavaultError::Storage("JSON import file must contain an array of objects".into())
+                DbaError::Storage("JSON import file must contain an array of objects".into())
             })?;
             for item in arr {
                 if let Some(obj) = item.as_object() {
@@ -822,7 +822,7 @@ fn load_import_records(
             }
         }
         DataFileFormat::Sql => {
-            return Err(DatavaultError::Storage(
+            return Err(DbaError::Storage(
                 "Use 'Execute SQL File' for .sql scripts".into(),
             ));
         }

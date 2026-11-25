@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore } from "../store/useWorkbenchStore";
-import type { ConnectionProfile, DatabaseObject, ObjectKind } from "../types/datavault";
+import type { ConnectionProfile, DatabaseObject, ObjectKind } from "../types/dba";
 
 interface ContextMenuState {
   x: number;

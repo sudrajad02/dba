@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore } from "../store/useWorkbenchStore";
-import type { DatabaseObject } from "../types/datavault";
+import type { DatabaseObject } from "../types/dba";
 
 export const ObjectsBrowser: React.FC = () => {
   const {

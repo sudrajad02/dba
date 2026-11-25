@@ -11,7 +11,7 @@ use crate::models::{
 use std::sync::Mutex;
 
 pub struct StorageManager {
-    pub paths: paths::DatavaultPaths,
+    pub paths: paths::DbaPaths,
     pub secrets: keyring::SecretStore,
     pub db: Mutex<sqlite::LocalDb>,
     pub workspace: workspace::WorkspaceStore,
@@ -19,7 +19,7 @@ pub struct StorageManager {
 
 impl StorageManager {
     pub fn initialize() -> Result<Self> {
-        let paths = paths::DatavaultPaths::resolve()?;
+        let paths = paths::DbaPaths::resolve()?;
         paths.ensure_dirs()?;
         let db = sqlite::LocalDb::open(&paths.sqlite_db)?;
         let workspace = workspace::WorkspaceStore::new(paths.clone());

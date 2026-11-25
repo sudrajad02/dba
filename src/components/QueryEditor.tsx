@@ -16,7 +16,7 @@ import type {
   ExplainNode,
   ExplainPlanResult,
   QueryExecutionResponse,
-} from "../types/datavault";
+} from "../types/dba";
 
 const ExplainTreeNode: React.FC<{ node: ExplainNode; depth?: number }> = ({
   node,

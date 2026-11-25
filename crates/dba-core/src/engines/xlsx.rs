@@ -1,4 +1,4 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
@@ -130,7 +130,7 @@ pub fn read_xlsx<P: AsRef<Path>>(path: P, max_rows: Option<usize>) -> Result<Vec
                 .find(|(k, _)| k.starts_with("xl/worksheets/sheet") && k.ends_with(".xml"))
                 .map(|(_, v)| v)
         })
-        .ok_or_else(|| DatavaultError::Storage("Invalid .xlsx file: missing worksheet XML".into()))?;
+        .ok_or_else(|| DbaError::Storage("Invalid .xlsx file: missing worksheet XML".into()))?;
 
     let xml = String::from_utf8_lossy(sheet_bytes);
     parse_worksheet_rows(&xml, &shared_strings, max_rows)
@@ -439,7 +439,7 @@ fn read_zip_entries(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>> {
     let eocd_pos = (0..bytes.len().saturating_sub(21))
         .rev()
         .find(|&i| bytes[i..i + 4] == [0x50, 0x4b, 0x05, 0x06])
-        .ok_or_else(|| DatavaultError::Storage("Invalid ZIP/.xlsx archive (missing EOCD)".into()))?;
+        .ok_or_else(|| DbaError::Storage("Invalid ZIP/.xlsx archive (missing EOCD)".into()))?;
 
     let cd_offset = u32::from_le_bytes(bytes[eocd_pos + 16..eocd_pos + 20].try_into().unwrap()) as usize;
     let total_entries = u16::from_le_bytes(bytes[eocd_pos + 10..eocd_pos + 12].try_into().unwrap()) as usize;
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn roundtrip_xlsx() {
-        let tmp = std::env::temp_dir().join("datavault_test_roundtrip.xlsx");
+        let tmp = std::env::temp_dir().join("dba_test_roundtrip.xlsx");
         let headers = vec!["id".into(), "name".into(), "active".into()];
         let rows = vec![
             vec![serde_json::json!(1), serde_json::json!("Alice & Bob"), serde_json::json!(true)],

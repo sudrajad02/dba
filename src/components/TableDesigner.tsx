@@ -8,7 +8,7 @@ import type {
   IndexMeta,
   TableDesignColumn,
   TableDesignDraft,
-} from "../types/datavault";
+} from "../types/dba";
 
 const PG_TYPES = [
   "bigint",

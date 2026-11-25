@@ -1,4 +1,4 @@
-use crate::error::{DatavaultError, Result};
+use crate::error::{DbaError, Result};
 use crate::models::*;
 use std::path::PathBuf;
 use std::process::Command;
@@ -87,7 +87,7 @@ pub async fn run_native_cli(
 ) -> Result<NativeCliRunResult> {
     let start = Instant::now();
     let bin_path = find_in_path(&req.tool).ok_or_else(|| {
-        DatavaultError::Storage(format!(
+        DbaError::Storage(format!(
             "Native CLI tool '{}' not found in PATH. Install it or use Built-in SQL Dump.",
             req.tool
         ))
@@ -285,7 +285,7 @@ pub async fn run_native_cli(
             }
         }
         other => {
-            return Err(DatavaultError::Storage(format!(
+            return Err(DbaError::Storage(format!(
                 "Unsupported native CLI tool '{}'",
                 other
             )));
@@ -319,7 +319,7 @@ pub async fn run_native_cli(
         cmd.output()
     })
     .await
-    .map_err(|e| DatavaultError::Storage(format!("CLI task join error: {}", e)))??;
+    .map_err(|e| DbaError::Storage(format!("CLI task join error: {}", e)))??;
 
     Ok(NativeCliRunResult {
         ok: output.status.success(),

@@ -40,7 +40,7 @@
 - **Visual Query Builder**: Build `SELECT`, `JOIN`, `WHERE`, and aggregate queries visually.
 - **Charts & BI Dashboard**: Turn query results into visual charts and dashboards.
 - **Data Generator**: Generate realistic, deterministic mock data for testing and seeding.
-- **Batch Jobs & Automation**: Chain backup, export, transfer, sync, and data generation steps into reusable jobs, runnable manually or via the headless CLI (`datavault-cli`) and `systemd --user` timers on Linux.
+- **Batch Jobs & Automation**: Chain backup, export, transfer, sync, and data generation steps into reusable jobs, runnable manually or via the headless CLI (`dba-cli`) and `systemd --user` timers on Linux.
 
 ---
 

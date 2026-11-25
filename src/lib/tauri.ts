@@ -68,7 +68,7 @@ import type {
   TableMetadata,
   TypeMappingRule,
   VisualQuerySpec,
-} from "../types/datavault";
+} from "../types/dba";
 
 export function formatApiError(err: unknown): string {
   if (typeof err === "string") return err;
