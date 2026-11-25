@@ -521,6 +521,56 @@ impl ConnectionManager {
         drv.get_object_ddl(database, schema, name, kind).await
     }
 
+    pub async fn create_database(
+        &self,
+        connection_id: &str,
+        name: &str,
+        charset: Option<&str>,
+        collation: Option<&str>,
+    ) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(DbaError::Database {
+                message: "Database name cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
+        }
+        drv.create_database(trimmed, charset, collation).await
+    }
+
+    pub async fn drop_database(
+        &self,
+        connection_id: &str,
+        name: &str,
+        confirmed: bool,
+    ) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(DbaError::Database {
+                message: "Database name cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
+        }
+        if !confirmed {
+            return Err(DbaError::SafetyGuardBlocked(
+                "Confirmation required for DROP DATABASE".into(),
+            ));
+        }
+        drv.drop_database(trimmed).await
+    }
+
     // ========================================================================
     // Phase 2: MongoDB Native Operations
     // ========================================================================

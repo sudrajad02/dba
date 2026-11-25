@@ -271,8 +271,10 @@ export const ConnectionModal: React.FC = () => {
                 if (item.id === "mysql" && ["postgres", "sa", ""].includes(username)) setUsername("root");
                 if (item.id === "mssql" && ["postgres", "root", ""].includes(username)) setUsername("sa");
                 if (item.id === "mongodb" && ["postgres", "root", "sa"].includes(username)) setUsername("");
-                if (item.id === "mssql" && ["postgres", "admin"].includes(database)) setDatabase("master");
-                if (item.id === "mongodb" && ["postgres", "master"].includes(database)) setDatabase("admin");
+                if (item.id === "postgres" && ["", "master", "admin"].includes(database)) setDatabase("postgres");
+                if (item.id === "mysql" && ["postgres", "master", "admin"].includes(database)) setDatabase("");
+                if (item.id === "mssql" && ["postgres", "admin", ""].includes(database)) setDatabase("master");
+                if (item.id === "mongodb" && ["postgres", "master", ""].includes(database)) setDatabase("admin");
               }}
               className={`flex-1 py-2 px-2.5 rounded-lg border text-xs font-medium transition ${
                 engine === item.id

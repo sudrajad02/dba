@@ -1111,6 +1111,40 @@ impl SqlDriver for MssqlDriver {
         Ok(())
     }
 
+    async fn create_database(
+        &self,
+        name: &str,
+        _charset: Option<&str>,
+        collation: Option<&str>,
+    ) -> Result<()> {
+        let mut client = self.open_client(Some("master")).await?;
+        let mut sql = format!(
+            "CREATE DATABASE {}",
+            crate::drivers::quote_ident(DbEngine::Mssql, name)
+        );
+        if let Some(col) = collation.map(str::trim).filter(|s| !s.is_empty()) {
+            let safe_col = crate::drivers::validate_sql_option_token(col, "collation")?;
+            sql.push_str(&format!(" COLLATE {}", safe_col));
+        }
+        client.execute(sql, &[]).await.map_err(map_mssql_error)?;
+        Ok(())
+    }
+
+    async fn drop_database(&self, name: &str) -> Result<()> {
+        let mut client = self.open_client(Some("master")).await?;
+        client
+            .execute(
+                format!(
+                    "DROP DATABASE {}",
+                    crate::drivers::quote_ident(DbEngine::Mssql, name)
+                ),
+                &[],
+            )
+            .await
+            .map_err(map_mssql_error)?;
+        Ok(())
+    }
+
     async fn duplicate_table(
         &self,
         database: Option<&str>,

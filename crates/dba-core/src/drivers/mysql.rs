@@ -761,6 +761,34 @@ impl SqlDriver for MysqlDriver {
         Ok(())
     }
 
+    async fn create_database(
+        &self,
+        name: &str,
+        charset: Option<&str>,
+        collation: Option<&str>,
+    ) -> Result<()> {
+        let mut conn = self.pool.get_conn().await.map_err(map_mysql_error)?;
+        let mut sql = format!("CREATE DATABASE {}", quote_ident(DbEngine::Mysql, name));
+        if let Some(cs) = charset.map(str::trim).filter(|s| !s.is_empty()) {
+            let safe_cs = crate::drivers::validate_sql_option_token(cs, "character set")?;
+            sql.push_str(&format!(" CHARACTER SET {}", safe_cs));
+        }
+        if let Some(col) = collation.map(str::trim).filter(|s| !s.is_empty()) {
+            let safe_col = crate::drivers::validate_sql_option_token(col, "collation")?;
+            sql.push_str(&format!(" COLLATE {}", safe_col));
+        }
+        conn.query_drop(sql).await.map_err(map_mysql_error)?;
+        Ok(())
+    }
+
+    async fn drop_database(&self, name: &str) -> Result<()> {
+        let mut conn = self.pool.get_conn().await.map_err(map_mysql_error)?;
+        conn.query_drop(format!("DROP DATABASE {}", quote_ident(DbEngine::Mysql, name)))
+            .await
+            .map_err(map_mysql_error)?;
+        Ok(())
+    }
+
     async fn duplicate_table(
         &self,
         database: Option<&str>,

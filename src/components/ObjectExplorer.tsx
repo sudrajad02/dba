@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -21,6 +21,7 @@ import {
   Table2,
   Trash2,
   Wrench,
+  X,
   Zap,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
@@ -90,6 +91,113 @@ export const ObjectExplorer: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) {
+        setCtxMenu(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("mousedown", handleOutside);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleOutside);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [ctxMenu]);
+  const [createDbModal, setCreateDbModal] = useState<{
+    connection: ConnectionProfile;
+    name: string;
+    charset: string;
+    collation: string;
+    submitting: boolean;
+    error: string | null;
+  } | null>(null);
+
+  const openCreateDbModal = (conn: ConnectionProfile) => {
+    setCreateDbModal({
+      connection: conn,
+      name: "",
+      charset: conn.engine === "mysql" ? "utf8mb4" : conn.engine === "postgres" ? "UTF8" : "",
+      collation: conn.engine === "mysql" ? "utf8mb4_unicode_ci" : "",
+      submitting: false,
+      error: null,
+    });
+  };
+
+  const handleCreateDatabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createDbModal) return;
+    const trimmed = createDbModal.name.trim();
+    if (!trimmed) {
+      setCreateDbModal((prev) => (prev ? { ...prev, error: "Database name is required." } : null));
+      return;
+    }
+
+    setCreateDbModal((prev) => (prev ? { ...prev, submitting: true, error: null } : null));
+    const { connection, charset, collation } = createDbModal;
+    try {
+      if (!connectedIds.has(connection.id)) {
+        const ok = await connectTo(connection.id);
+        if (!ok) {
+          setCreateDbModal((prev) =>
+            prev ? { ...prev, submitting: false, error: "Failed to connect to server." } : null
+          );
+          return;
+        }
+      }
+      await api.createDatabase(
+        connection.id,
+        trimmed,
+        charset.trim() || undefined,
+        collation.trim() || undefined
+      );
+      addLog("success", `Created database "${trimmed}" on ${connection.name}`);
+      await loadDatabases(connection.id);
+      setExpanded((prev) => new Set(prev).add(`conn:${connection.id}`));
+      setCreateDbModal(null);
+    } catch (err) {
+      const msg = formatApiError(err);
+      setCreateDbModal((prev) => (prev ? { ...prev, submitting: false, error: msg } : null));
+      addLog("error", `Create database failed: ${msg}`);
+    }
+  };
+
+  const handleDropDatabase = (conn: ConnectionProfile, db: string) => {
+    const quoted =
+      conn.engine === "mysql"
+        ? `\`${db}\``
+        : conn.engine === "mssql"
+        ? `[${db}]`
+        : `"${db}"`;
+    openSafetyModal({
+      title: `Drop Database "${db}"`,
+      warnings: [
+        `This will permanently DROP DATABASE "${db}" and ALL tables/data inside it.`,
+        ...(conn.environment === "production"
+          ? [`Target connection "${conn.name}" is PRODUCTION!`]
+          : []),
+      ],
+      sqlPreview:
+        conn.engine === "mongodb"
+          ? `db.getSiblingDB("${db}").dropDatabase()`
+          : `DROP DATABASE ${quoted};`,
+      onConfirm: async () => {
+        try {
+          await api.dropDatabase(conn.id, db, true);
+          addLog("warn", `Dropped database "${db}" on ${conn.name}`);
+          await loadDatabases(conn.id);
+        } catch (err) {
+          addLog("error", `Drop database failed: ${formatApiError(err)}`);
+        }
+      },
+    });
+  };
 
   const toggleExpand = (key: string) => {
     setExpanded((prev) => {
@@ -686,89 +794,107 @@ export const ObjectExplorer: React.FC = () => {
       {/* Context Menu */}
       {ctxMenu && (
         <div
+          ref={ctxMenuRef}
           style={{ top: ctxMenu.y, left: ctxMenu.x }}
           className="fixed z-50 w-48 py-1 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs"
           onClick={(e) => e.stopPropagation()}
         >
           {ctxMenu.type === "connection" ? (
-            <>
-              {connectedIds.has(ctxMenu.connection.id) ? (
-                <button
-                  onClick={() => {
-                    disconnectFrom(ctxMenu.connection.id);
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <Plug className="w-3.5 h-3.5 text-amber-400" /> Disconnect
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    connectTo(ctxMenu.connection.id);
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <PlugZap className="w-3.5 h-3.5 text-emerald-400" /> Connect
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  if (ctxMenu.connection.engine === "mongodb") {
-                    openTab({
-                      kind: "mongo_query",
-                      title: `MQL — ${ctxMenu.connection.name}`,
-                      connectionId: ctxMenu.connection.id,
-                      database: ctxMenu.connection.database ?? undefined,
-                      mongoMode: "mql",
-                    });
-                  } else {
-                    openTab({
-                      kind: "query",
-                      title: `Query — ${ctxMenu.connection.name}`,
-                      connectionId: ctxMenu.connection.id,
-                      database: ctxMenu.connection.database ?? undefined,
-                      sql: "",
-                    });
-                  }
-                  setCtxMenu(null);
-                }}
-                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />{" "}
-                {ctxMenu.connection.engine === "mongodb" ? "New MQL Query" : "New Query"}
-              </button>
-              <button
-                onClick={() => {
-                  loadDatabases(ctxMenu.connection.id);
-                  setCtxMenu(null);
-                }}
-                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Refresh Databases
-              </button>
-              <button
-                onClick={() => {
-                  openConnectionModal(ctxMenu.connection);
-                  setCtxMenu(null);
-                }}
-                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                <Edit3 className="w-3.5 h-3.5" /> Edit Connection
-              </button>
-              <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
-              <button
-                onClick={async () => {
-                  await api.deleteConnection(ctxMenu.connection.id);
-                  await refreshConnections();
-                  setCtxMenu(null);
-                }}
-                className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Delete Connection
-              </button>
-            </>
+            (() => {
+              const isConnected = connectedIds.has(ctxMenu.connection.id);
+              return (
+                <>
+                  {isConnected ? (
+                    <button
+                      onClick={() => {
+                        disconnectFrom(ctxMenu.connection.id);
+                        setCtxMenu(null);
+                      }}
+                      className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <Plug className="w-3.5 h-3.5 text-amber-400" /> Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        connectTo(ctxMenu.connection.id);
+                        setCtxMenu(null);
+                      }}
+                      className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <PlugZap className="w-3.5 h-3.5 text-emerald-400" /> Connect
+                    </button>
+                  )}
+                  <button
+                    disabled={!isConnected}
+                    onClick={() => {
+                      if (ctxMenu.connection.engine === "mongodb") {
+                        openTab({
+                          kind: "mongo_query",
+                          title: `MQL — ${ctxMenu.connection.name}`,
+                          connectionId: ctxMenu.connection.id,
+                          database: ctxMenu.connection.database ?? undefined,
+                          mongoMode: "mql",
+                        });
+                      } else {
+                        openTab({
+                          kind: "query",
+                          title: `Query — ${ctxMenu.connection.name}`,
+                          connectionId: ctxMenu.connection.id,
+                          database: ctxMenu.connection.database ?? undefined,
+                          sql: "",
+                        });
+                      }
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />{" "}
+                    {ctxMenu.connection.engine === "mongodb" ? "New MQL Query" : "New Query"}
+                  </button>
+                  <button
+                    disabled={!isConnected}
+                    onClick={() => {
+                      openCreateDbModal(ctxMenu.connection);
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" /> New Database...
+                  </button>
+                  <button
+                    disabled={!isConnected}
+                    onClick={() => {
+                      loadDatabases(ctxMenu.connection.id);
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Refresh Databases
+                  </button>
+                  <button
+                    onClick={() => {
+                      openConnectionModal(ctxMenu.connection);
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" /> Edit Connection
+                  </button>
+                  <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                  <button
+                    onClick={async () => {
+                      await api.deleteConnection(ctxMenu.connection.id);
+                      await refreshConnections();
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete Connection
+                  </button>
+                </>
+              );
+            })()
           ) : ctxMenu.type === "database" ? (
             <>
               <button
@@ -805,6 +931,20 @@ export const ObjectExplorer: React.FC = () => {
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh Objects
               </button>
+              {ctxMenu.database && (
+                <>
+                  <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                  <button
+                    onClick={() => {
+                      handleDropDatabase(ctxMenu.connection, ctxMenu.database!);
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Drop Database
+                  </button>
+                </>
+              )}
             </>
           ) : (
             ctxMenu.object && (
@@ -1042,6 +1182,186 @@ export const ObjectExplorer: React.FC = () => {
               </>
             )
           )}
+        </div>
+      )}
+
+      {/* Create Database Modal */}
+      {createDbModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          onClick={() => !createDbModal.submitting && setCreateDbModal(null)}
+        >
+          <form
+            onSubmit={handleCreateDatabase}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden text-xs"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-500" />
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    New Database
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    {createDbModal.connection.name} ({createDbModal.connection.engine.toUpperCase()})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={createDbModal.submitting}
+                onClick={() => setCreateDbModal(null)}
+                className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-zinc-500 mb-1">Database Name</label>
+                <input
+                  autoFocus
+                  value={createDbModal.name}
+                  onChange={(e) =>
+                    setCreateDbModal((prev) =>
+                      prev ? { ...prev, name: e.target.value, error: null } : null
+                    )
+                  }
+                  placeholder="e.g. my_app_db"
+                  className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {createDbModal.connection.engine === "mysql" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-zinc-500 mb-1">Character Set</label>
+                    <select
+                      value={createDbModal.charset}
+                      onChange={(e) => {
+                        const cs = e.target.value;
+                        const defaultCol =
+                          cs === "utf8mb4"
+                            ? "utf8mb4_unicode_ci"
+                            : cs === "utf8mb3"
+                            ? "utf8mb3_unicode_ci"
+                            : cs === "latin1"
+                            ? "latin1_swedish_ci"
+                            : "";
+                        setCreateDbModal((prev) =>
+                          prev ? { ...prev, charset: cs, collation: defaultCol } : null
+                        );
+                      }}
+                      className="w-full h-8 px-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    >
+                      <option value="">Server Default</option>
+                      <option value="utf8mb4">utf8mb4</option>
+                      <option value="utf8mb3">utf8mb3</option>
+                      <option value="latin1">latin1</option>
+                      <option value="ascii">ascii</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-zinc-500 mb-1">Collation</label>
+                    <input
+                      value={createDbModal.collation}
+                      onChange={(e) =>
+                        setCreateDbModal((prev) =>
+                          prev ? { ...prev, collation: e.target.value } : null
+                        )
+                      }
+                      placeholder="utf8mb4_unicode_ci"
+                      className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {createDbModal.connection.engine === "postgres" && (
+                <div>
+                  <label className="block text-zinc-500 mb-1">Encoding</label>
+                  <select
+                    value={createDbModal.charset}
+                    onChange={(e) =>
+                      setCreateDbModal((prev) =>
+                        prev ? { ...prev, charset: e.target.value } : null
+                      )
+                    }
+                    className="w-full h-8 px-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  >
+                    <option value="">Server Default</option>
+                    <option value="UTF8">UTF8</option>
+                    <option value="SQL_ASCII">SQL_ASCII</option>
+                    <option value="LATIN1">LATIN1</option>
+                  </select>
+                </div>
+              )}
+
+              {createDbModal.connection.engine === "mssql" && (
+                <div>
+                  <label className="block text-zinc-500 mb-1">Collation (optional)</label>
+                  <input
+                    value={createDbModal.collation}
+                    onChange={(e) =>
+                      setCreateDbModal((prev) =>
+                        prev ? { ...prev, collation: e.target.value } : null
+                      )
+                    }
+                    placeholder="e.g. SQL_Latin1_General_CP1_CI_AS"
+                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  />
+                </div>
+              )}
+
+              {createDbModal.connection.engine === "mongodb" && (
+                <p className="text-[11px] text-zinc-500 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2">
+                  MongoDB materializes databases lazily. An initial <code className="font-mono">_init</code> collection will be created so the database appears immediately.
+                </p>
+              )}
+
+              {createDbModal.connection.engine !== "mongodb" && createDbModal.name.trim() && (
+                <div className="rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2.5 py-2 font-mono text-[11px] text-zinc-600 dark:text-zinc-400 break-all">
+                  {createDbModal.connection.engine === "mysql"
+                    ? `CREATE DATABASE \`${createDbModal.name.trim()}\`${
+                        createDbModal.charset ? ` CHARACTER SET ${createDbModal.charset}` : ""
+                      }${createDbModal.collation ? ` COLLATE ${createDbModal.collation}` : ""};`
+                    : createDbModal.connection.engine === "postgres"
+                    ? `CREATE DATABASE "${createDbModal.name.trim()}"${
+                        createDbModal.charset ? ` WITH ENCODING '${createDbModal.charset}'` : ""
+                      };`
+                    : `CREATE DATABASE [${createDbModal.name.trim()}]${
+                        createDbModal.collation ? ` COLLATE ${createDbModal.collation}` : ""
+                      };`}
+                </div>
+              )}
+
+              {createDbModal.error && (
+                <div className="rounded-lg border border-red-300 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-red-600 dark:text-red-400">
+                  {createDbModal.error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/40">
+              <button
+                type="button"
+                disabled={createDbModal.submitting}
+                onClick={() => setCreateDbModal(null)}
+                className="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={createDbModal.submitting || !createDbModal.name.trim()}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium disabled:opacity-50"
+              >
+                {createDbModal.submitting ? "Creating..." : "Create Database"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </aside>

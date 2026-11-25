@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeftRight,
   BarChart3,
   Clock,
   Columns2,
+  Copy,
   Database,
   Download,
   Eye,
@@ -11,6 +13,7 @@ import {
   FunctionSquare,
   GitCompare,
   HardDriveDownload,
+  Minus,
   Monitor,
   Moon,
   Network,
@@ -23,10 +26,12 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Square,
   Sun,
   Table2,
   Wand2,
   Wrench,
+  X,
 } from "lucide-react";
 import { useWorkbenchStore } from "../store/useWorkbenchStore";
 
@@ -100,6 +105,46 @@ export const NavicatToolbar: React.FC = () => {
 
   const activeConn = connections.find((c) => c.id === activeConnectionId);
   const isProd = activeConn?.environment === "production";
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    try {
+      const win = getCurrentWindow();
+      win.isMaximized().then(setIsMaximized).catch(() => {});
+      win
+        .onResized(() => {
+          win.isMaximized().then(setIsMaximized).catch(() => {});
+        })
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => {});
+    } catch {
+      // Running outside Tauri webview (e.g. browser dev preview)
+    }
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    try {
+      getCurrentWindow().minimize().catch(() => {});
+    } catch {}
+  };
+
+  const handleToggleMaximize = () => {
+    try {
+      getCurrentWindow().toggleMaximize().catch(() => {});
+    } catch {}
+  };
+
+  const handleCloseWindow = () => {
+    try {
+      getCurrentWindow().close().catch(() => {});
+    } catch {}
+  };
 
   const cycleTheme = () => {
     const next = theme === "dark" ? "light" : theme === "light" ? "system" : "dark";
@@ -178,8 +223,15 @@ export const NavicatToolbar: React.FC = () => {
       )}
 
       {/* Tier 1: Compact Utility & Status Bar */}
-      <div className="h-8 px-2.5 flex items-center justify-between border-b border-zinc-200 dark:border-[#32343a] bg-zinc-100 dark:bg-[#1e1f22] text-xs">
-        <div className="flex items-center gap-2">
+      <div
+        data-tauri-drag-region
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest("button, input, select")) return;
+          handleToggleMaximize();
+        }}
+        className="h-8 pl-2.5 pr-1 flex items-center justify-between border-b border-zinc-200 dark:border-[#32343a] bg-zinc-100 dark:bg-[#1e1f22] text-xs"
+      >
+        <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
           <div className="flex items-center gap-1.5 font-bold text-zinc-900 dark:text-zinc-100">
             <Database className="w-4 h-4 text-sky-400" />
             <span>DBa</span>
@@ -320,6 +372,40 @@ export const NavicatToolbar: React.FC = () => {
           >
             <PanelRight className="w-3.5 h-3.5" />
           </button>
+
+          <div className="w-px h-3.5 bg-zinc-300 dark:bg-zinc-700 mx-1" />
+
+          {/* Window Controls */}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={handleMinimize}
+              title="Minimize"
+              aria-label="Minimize window"
+              className="h-6 w-7 flex items-center justify-center rounded text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition cursor-pointer"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleToggleMaximize}
+              title={isMaximized ? "Restore" : "Maximize"}
+              aria-label={isMaximized ? "Restore window" : "Maximize window"}
+              className="h-6 w-7 flex items-center justify-center rounded text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition cursor-pointer"
+            >
+              {isMaximized ? (
+                <Copy className="w-3 h-3" />
+              ) : (
+                <Square className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              onClick={handleCloseWindow}
+              title="Close"
+              aria-label="Close window"
+              className="h-6 w-7 flex items-center justify-center rounded text-zinc-600 dark:text-zinc-300 hover:bg-red-500 hover:text-white transition cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

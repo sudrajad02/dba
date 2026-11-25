@@ -1057,6 +1057,34 @@ impl SqlDriver for PostgresDriver {
         Ok(())
     }
 
+    async fn create_database(
+        &self,
+        name: &str,
+        charset: Option<&str>,
+        _collation: Option<&str>,
+    ) -> Result<()> {
+        let client = self.get_client(None).await?;
+        let mut sql = format!("CREATE DATABASE {}", quote_ident(DbEngine::Postgres, name));
+        if let Some(enc) = charset.map(str::trim).filter(|s| !s.is_empty()) {
+            let safe_enc = crate::drivers::validate_sql_option_token(enc, "encoding")?;
+            sql.push_str(&format!(" WITH ENCODING '{}'", safe_enc));
+        }
+        client.execute(&sql, &[]).await.map_err(map_pg_error)?;
+        Ok(())
+    }
+
+    async fn drop_database(&self, name: &str) -> Result<()> {
+        let client = self.get_client(None).await?;
+        client
+            .execute(
+                &format!("DROP DATABASE {}", quote_ident(DbEngine::Postgres, name)),
+                &[],
+            )
+            .await
+            .map_err(map_pg_error)?;
+        Ok(())
+    }
+
     async fn duplicate_table(
         &self,
         database: Option<&str>,

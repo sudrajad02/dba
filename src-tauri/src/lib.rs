@@ -311,6 +311,40 @@ async fn drop_object(
 }
 
 #[tauri::command]
+async fn create_database(
+    state: State<'_, AppState>,
+    connection_id: String,
+    name: String,
+    charset: Option<String>,
+    collation: Option<String>,
+) -> CmdResult<()> {
+    state
+        .manager
+        .create_database(
+            &connection_id,
+            &name,
+            charset.as_deref(),
+            collation.as_deref(),
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn drop_database(
+    state: State<'_, AppState>,
+    connection_id: String,
+    name: String,
+    confirmed: bool,
+) -> CmdResult<()> {
+    state
+        .manager
+        .drop_database(&connection_id, &name, confirmed)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 async fn duplicate_table(
     state: State<'_, AppState>,
     connection_id: String,
@@ -959,6 +993,8 @@ pub fn run() {
             execute_ddl,
             truncate_table,
             drop_object,
+            create_database,
+            drop_database,
             duplicate_table,
             get_object_ddl,
             search_query_history,

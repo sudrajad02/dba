@@ -75,6 +75,41 @@ pub trait SqlDriver: Send + Sync {
             "DDL extraction is not supported for this object/engine".into(),
         ))
     }
+    async fn create_database(
+        &self,
+        name: &str,
+        charset: Option<&str>,
+        collation: Option<&str>,
+    ) -> Result<()> {
+        let _ = (name, charset, collation);
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Creating databases is not supported for this engine".into(),
+        ))
+    }
+    async fn drop_database(&self, name: &str) -> Result<()> {
+        let _ = name;
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Dropping databases is not supported for this engine".into(),
+        ))
+    }
+}
+
+/// Validates a charset/collation/encoding token so it cannot inject SQL.
+pub fn validate_sql_option_token(val: &str, label: &str) -> Result<String> {
+    let trimmed = val.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(crate::error::DbaError::Database {
+            message: format!("Invalid {}: '{}'", label, val),
+            code: None,
+            detail: None,
+            line: None,
+        });
+    }
+    Ok(trimmed.to_string())
 }
 
 /// Quotes a SQL identifier safely for PostgreSQL (`"id"`), MySQL (`` `id` ``), or MSSQL (`[id]`).

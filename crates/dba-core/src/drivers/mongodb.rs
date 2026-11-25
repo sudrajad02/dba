@@ -985,6 +985,29 @@ impl SqlDriver for MongoDriver {
         Ok(())
     }
 
+    async fn create_database(
+        &self,
+        name: &str,
+        _charset: Option<&str>,
+        _collation: Option<&str>,
+    ) -> Result<()> {
+        self.client
+            .database(name)
+            .create_collection("_init")
+            .await
+            .map_err(map_mongo_error)?;
+        Ok(())
+    }
+
+    async fn drop_database(&self, name: &str) -> Result<()> {
+        self.client
+            .database(name)
+            .drop()
+            .await
+            .map_err(map_mongo_error)?;
+        Ok(())
+    }
+
     async fn duplicate_table(
         &self,
         database: Option<&str>,

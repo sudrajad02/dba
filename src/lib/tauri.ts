@@ -100,6 +100,20 @@ export const api = {
 
   listDatabases: (connectionId: string) =>
     invoke<DatabaseInfo[]>("list_databases", { connectionId }),
+  createDatabase: (
+    connectionId: string,
+    name: string,
+    charset?: string,
+    collation?: string
+  ) =>
+    invoke<void>("create_database", {
+      connectionId,
+      name,
+      charset,
+      collation,
+    }),
+  dropDatabase: (connectionId: string, name: string, confirmed: boolean) =>
+    invoke<void>("drop_database", { connectionId, name, confirmed }),
   listSchemas: (connectionId: string, database?: string) =>
     invoke<SchemaInfo[]>("list_schemas", { connectionId, database }),
   listObjects: (connectionId: string, database?: string, schema?: string) =>
