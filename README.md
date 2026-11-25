@@ -55,12 +55,14 @@ DBa runs natively on **Linux**, **macOS**, and **Windows**:
 
 ## Download
 
-Pre-built binaries and installers for **Linux**, **macOS**, and **Windows** are available on the **Releases** page:
+[![Latest Release](https://img.shields.io/github/v/release/sudrajad02/dba?label=Download%20Latest&style=for-the-badge)](https://github.com/sudrajad02/dba/releases/latest)
 
-| Platform | Formats |
-| --- | --- |
-| **Linux** | `.AppImage`, `.deb`, `.rpm` |
-| **macOS** | `.dmg`, `.app` |
-| **Windows** | `.msi`, `.exe` |
+Pre-built binaries and installers for **Linux**, **macOS**, and **Windows** are available on the [**GitHub Releases**](https://github.com/sudrajad02/dba/releases/latest) page:
 
-Download the installer for your operating system, install, and launch **DBa** — no additional runtime or setup required.
+| Platform | Architecture | Formats | Download |
+| --- | --- | --- | --- |
+| **Linux** | `x86_64` | `.AppImage`, `.deb`, `.rpm` | [Download for Linux](https://github.com/sudrajad02/dba/releases/latest) |
+| **macOS** | Apple Silicon (`aarch64`) & Intel (`x86_64`) | `.dmg` | [Download for macOS](https://github.com/sudrajad02/dba/releases/latest) |
+| **Windows** | `x86_64` | `.msi`, `.exe` (NSIS) | [Download for Windows](https://github.com/sudrajad02/dba/releases/latest) |
+
+Download the installer for your operating system from the [latest release](https://github.com/sudrajad02/dba/releases/latest) (or browse [all releases](https://github.com/sudrajad02/dba/releases)), install, and launch **DBa** — no additional runtime or setup required.
