@@ -174,14 +174,31 @@ export const ObjectsBrowser: React.FC = () => {
   };
 
   const handleRefresh = async () => {
-    if (!conn || !browserContext.database) return;
+    if (!conn || !browserContext.database || refreshing) return;
     setRefreshing(true);
-    await loadObjects(
-      conn.id,
-      browserContext.database,
-      browserContext.schema ?? browserContext.database
-    );
-    setRefreshing(false);
+    try {
+      await loadObjects(
+        conn.id,
+        browserContext.database,
+        browserContext.schema ?? browserContext.database
+      );
+      if (
+        selectedObj &&
+        (selectedObj.kind === "table" || selectedObj.kind === "view")
+      ) {
+        api
+          .getTableMetadata(
+            conn.id,
+            selectedObj.name,
+            browserContext.database,
+            browserContext.schema ?? undefined
+          )
+          .then((meta) => setInspectedTableMeta(meta))
+          .catch(() => {});
+      }
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleDeleteObject = (obj: DatabaseObject) => {
@@ -286,6 +303,15 @@ export const ObjectsBrowser: React.FC = () => {
       ) {
         return;
       }
+      if (
+        (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")) &&
+        conn &&
+        browserContext.database
+      ) {
+        e.preventDefault();
+        handleRefresh();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedObj) {
         e.preventDefault();
         handleCopyObject(selectedObj);
@@ -327,11 +353,19 @@ export const ObjectsBrowser: React.FC = () => {
       if (nextIdx !== null && objects[nextIdx]) {
         e.preventDefault();
         handleSelectObject(objects[nextIdx]);
-        const el = listContainerRef.current?.querySelector(
-          `[data-obj-index="${nextIdx}"]`
-        );
-        if (el instanceof HTMLElement) {
-          el.scrollIntoView({ block: "nearest" });
+        const container = listContainerRef.current;
+        const el = container?.querySelector(`[data-obj-index="${nextIdx}"]`);
+        if (container && el instanceof HTMLElement) {
+          const headerHeight =
+            container.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+          const cRect = container.getBoundingClientRect();
+          const eRect = el.getBoundingClientRect();
+          const visibleTop = cRect.top + headerHeight;
+          if (eRect.top < visibleTop) {
+            container.scrollTop -= visibleTop - eRect.top;
+          } else if (eRect.bottom > cRect.bottom) {
+            container.scrollTop += eRect.bottom - cRect.bottom;
+          }
         }
       }
     };
@@ -349,6 +383,7 @@ export const ObjectsBrowser: React.FC = () => {
     browserContext.category,
     viewMode,
     pasting,
+    refreshing,
   ]);
 
   if (!conn || !browserContext.database) {
@@ -519,7 +554,7 @@ export const ObjectsBrowser: React.FC = () => {
           <button
             onClick={handleRefresh}
             className="h-7 px-2 rounded hover:bg-zinc-200 dark:hover:bg-[#35373d]"
-            title="Refresh Objects"
+            title="Refresh Objects (F5 / Ctrl+R)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
@@ -596,7 +631,7 @@ export const ObjectsBrowser: React.FC = () => {
           </div>
         ) : viewMode === "list" ? (
           <table className="w-full border-collapse text-left">
-            <thead className="sticky top-0 bg-zinc-100 dark:bg-[#25262a] border-b border-zinc-200 dark:border-[#32343a]">
+            <thead className="sticky top-0 z-10 bg-zinc-100 dark:bg-[#25262a] border-b border-zinc-200 dark:border-[#32343a]">
               <tr>
                 <th className="px-3 py-2 font-semibold text-zinc-600 dark:text-zinc-300">
                   Name
