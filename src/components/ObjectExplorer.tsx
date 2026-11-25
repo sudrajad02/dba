@@ -377,7 +377,9 @@ export const ObjectExplorer: React.FC = () => {
                 ) : (
                   <ChevronRight className="w-3 h-3 shrink-0" />
                 )}
-                <span className="truncate font-medium">{cat.label}</span>
+                <span className={`truncate ${isActiveCategory ? "font-semibold" : "font-medium"}`}>
+                  {cat.label}
+                </span>
                 <span
                   className={`ml-auto text-[0.72rem] ${
                     isActiveCategory
@@ -489,7 +491,9 @@ export const ObjectExplorer: React.FC = () => {
                   const connKey = `conn:${conn.id}`;
                   const isOpen = expanded.has(connKey);
                   const dbs = databasesByConn[conn.id] ?? [];
-                  const isActiveConn = browserContext.connectionId === conn.id;
+                  const isActiveConn =
+                    browserContext.connectionId === conn.id &&
+                    (!isConnected || !isOpen || !browserContext.database);
 
                   return (
                     <div key={conn.id}>
@@ -506,7 +510,7 @@ export const ObjectExplorer: React.FC = () => {
                         }}
                         className={`group flex items-center gap-1.5 px-1.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
                           isActiveConn
-                            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300 font-semibold"
+                            ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                             : "font-medium text-zinc-800 dark:text-zinc-100 hover:bg-zinc-200/70 dark:hover:bg-zinc-800"
                         }`}
                       >
@@ -544,9 +548,10 @@ export const ObjectExplorer: React.FC = () => {
                             const dbOpen = expanded.has(dbKey);
                             const schemas =
                               schemasByConnDb[`${conn.id}::${db.name}`] ?? [];
-                            const isActiveDb =
+                            const isCurrentDb =
                               browserContext.connectionId === conn.id &&
                               browserContext.database === db.name;
+                            const isActiveDb = isCurrentDb && !dbOpen;
 
                             return (
                               <div key={db.name}>
@@ -570,7 +575,7 @@ export const ObjectExplorer: React.FC = () => {
                                   }}
                                   className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
                                     isActiveDb
-                                      ? "bg-sky-500/15 text-sky-700 dark:text-sky-200 font-semibold"
+                                      ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                                       : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
                                   }`}
                                 >
@@ -593,7 +598,9 @@ export const ObjectExplorer: React.FC = () => {
                                         const scKey = `schema:${conn.id}:${db.name}:${sc.name}`;
                                         const scOpen = expanded.has(scKey);
                                         const isActiveSchema =
-                                          isActiveDb && browserContext.schema === sc.name;
+                                          isCurrentDb &&
+                                          browserContext.schema === sc.name &&
+                                          !scOpen;
                                         return (
                                           <div key={sc.name}>
                                             <button
@@ -613,7 +620,7 @@ export const ObjectExplorer: React.FC = () => {
                                               }}
                                               className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
                                                 isActiveSchema
-                                                  ? "bg-sky-500/15 text-sky-700 dark:text-sky-200 font-semibold"
+                                                  ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                                                   : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
                                               }`}
                                             >
