@@ -79,6 +79,7 @@ export const ObjectExplorer: React.FC = () => {
     openSafetyModal,
     addLog,
     savedQueries,
+    browserContext,
     setBrowserContext,
     copiedObject,
     setCopiedObject,
@@ -334,6 +335,12 @@ export const ObjectExplorer: React.FC = () => {
           if (conn.engine === "mongodb" && cat.id === "table" && items.length === 0) return null;
           const catKey = `cat:${key}:${cat.id}`;
           const isOpen = expanded.has(catKey) || (q.length > 0 && items.length > 0);
+          const isActiveCategory =
+            browserContext.connectionId === conn.id &&
+            browserContext.database === dbName &&
+            (browserContext.schema ?? browserContext.database) === (schemaName ?? dbName) &&
+            cat.browserCategory !== undefined &&
+            browserContext.category === cat.browserCategory;
           return (
             <div key={cat.id}>
               <button
@@ -359,7 +366,11 @@ export const ObjectExplorer: React.FC = () => {
                     schema: schemaName ?? dbName,
                   });
                 }}
-                className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                  isActiveCategory
+                    ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
+                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                }`}
               >
                 {isOpen ? (
                   <ChevronDown className="w-3 h-3 shrink-0" />
@@ -367,7 +378,15 @@ export const ObjectExplorer: React.FC = () => {
                   <ChevronRight className="w-3 h-3 shrink-0" />
                 )}
                 <span className="truncate font-medium">{cat.label}</span>
-                <span className="ml-auto text-[0.72rem] text-zinc-500">{items.length}</span>
+                <span
+                  className={`ml-auto text-[0.72rem] ${
+                    isActiveCategory
+                      ? "text-sky-700 dark:text-sky-300 font-semibold"
+                      : "text-zinc-500"
+                  }`}
+                >
+                  {items.length}
+                </span>
               </button>
               {isOpen && (
                 <div className="pl-3 space-y-0.5">
@@ -470,6 +489,7 @@ export const ObjectExplorer: React.FC = () => {
                   const connKey = `conn:${conn.id}`;
                   const isOpen = expanded.has(connKey);
                   const dbs = databasesByConn[conn.id] ?? [];
+                  const isActiveConn = browserContext.connectionId === conn.id;
 
                   return (
                     <div key={conn.id}>
@@ -484,7 +504,11 @@ export const ObjectExplorer: React.FC = () => {
                             connection: conn,
                           });
                         }}
-                        className="group flex items-center gap-1.5 px-1.5 py-1.5 rounded-md text-xs font-medium text-zinc-800 dark:text-zinc-100 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 cursor-pointer"
+                        className={`group flex items-center gap-1.5 px-1.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
+                          isActiveConn
+                            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300 font-semibold"
+                            : "font-medium text-zinc-800 dark:text-zinc-100 hover:bg-zinc-200/70 dark:hover:bg-zinc-800"
+                        }`}
                       >
                         {isOpen ? (
                           <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
@@ -520,6 +544,9 @@ export const ObjectExplorer: React.FC = () => {
                             const dbOpen = expanded.has(dbKey);
                             const schemas =
                               schemasByConnDb[`${conn.id}::${db.name}`] ?? [];
+                            const isActiveDb =
+                              browserContext.connectionId === conn.id &&
+                              browserContext.database === db.name;
 
                             return (
                               <div key={db.name}>
@@ -541,7 +568,11 @@ export const ObjectExplorer: React.FC = () => {
                                           : db.name,
                                     });
                                   }}
-                                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                                  className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                                    isActiveDb
+                                      ? "bg-sky-500/15 text-sky-700 dark:text-sky-200 font-semibold"
+                                      : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                                  }`}
                                 >
                                   {dbOpen ? (
                                     <ChevronDown className="w-3 h-3 text-zinc-500 shrink-0" />
@@ -561,6 +592,8 @@ export const ObjectExplorer: React.FC = () => {
                                       {schemas.map((sc) => {
                                         const scKey = `schema:${conn.id}:${db.name}:${sc.name}`;
                                         const scOpen = expanded.has(scKey);
+                                        const isActiveSchema =
+                                          isActiveDb && browserContext.schema === sc.name;
                                         return (
                                           <div key={sc.name}>
                                             <button
@@ -578,7 +611,11 @@ export const ObjectExplorer: React.FC = () => {
                                                   schema: sc.name,
                                                 });
                                               }}
-                                              className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                                              className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                                                isActiveSchema
+                                                  ? "bg-sky-500/15 text-sky-700 dark:text-sky-200 font-semibold"
+                                                  : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                                              }`}
                                             >
                                               {scOpen ? (
                                                 <ChevronDown className="w-3 h-3 text-zinc-500" />
