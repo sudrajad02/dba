@@ -89,6 +89,7 @@ export const ObjectExplorer: React.FC = () => {
 
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
@@ -231,26 +232,91 @@ export const ObjectExplorer: React.FC = () => {
     toggleExpand(key);
   };
 
+  const handleSelectConnection = (conn: ConnectionProfile) => {
+    setSelectedNodeKey(`conn:${conn.id}`);
+    setBrowserContext({
+      connectionId: conn.id,
+      database: null,
+      schema: null,
+      category: "table",
+    });
+  };
+
+  const handleDoubleClickConnection = async (conn: ConnectionProfile) => {
+    const key = `conn:${conn.id}`;
+    setSelectedNodeKey(key);
+    if (!connectedIds.has(conn.id)) {
+      setLoading(key, true);
+      const ok = await connectTo(conn.id);
+      setLoading(key, false);
+      if (ok) {
+        setExpanded((prev) => new Set(prev).add(key));
+      }
+      return;
+    }
+    if (!expanded.has(key)) {
+      setExpanded((prev) => new Set(prev).add(key));
+    }
+  };
+
+  const loadDatabaseChildren = async (conn: ConnectionProfile, dbName: string) => {
+    const key = `db:${conn.id}:${dbName}`;
+    if (conn.engine === "postgres" || conn.engine === "mssql") {
+      const existingSchemas = schemasByConnDb[`${conn.id}::${dbName}`];
+      setLoading(key, true);
+      const schemas = existingSchemas ?? (await loadSchemas(conn.id, dbName));
+      const preferred = conn.engine === "mssql" ? "dbo" : "public";
+      const defaultSchema =
+        schemas.find((s) => s.name === preferred)?.name ?? schemas[0]?.name ?? preferred;
+      if (!objectsByKey[`${conn.id}::${dbName}::${defaultSchema}`]) {
+        await loadObjects(conn.id, dbName, defaultSchema);
+      }
+      setLoading(key, false);
+      return defaultSchema;
+    } else {
+      if (!objectsByKey[`${conn.id}::${dbName}::${dbName}`]) {
+        setLoading(key, true);
+        await loadObjects(conn.id, dbName, dbName);
+        setLoading(key, false);
+      }
+      return dbName;
+    }
+  };
+
   const handleToggleDatabase = async (conn: ConnectionProfile, dbName: string) => {
     const key = `db:${conn.id}:${dbName}`;
     const willExpand = !expanded.has(key);
     toggleExpand(key);
+    if (willExpand) {
+      await loadDatabaseChildren(conn, dbName);
+    }
+  };
 
+  const handleSelectDatabase = async (conn: ConnectionProfile, dbName: string) => {
+    setSelectedNodeKey(`db:${conn.id}:${dbName}`);
     if (conn.engine === "postgres" || conn.engine === "mssql") {
-      if (willExpand) {
-        setLoading(key, true);
-        const schemas = await loadSchemas(conn.id, dbName);
-        const preferred = conn.engine === "mssql" ? "dbo" : "public";
-        const defaultSchema =
-          schemas.find((s) => s.name === preferred)?.name ?? schemas[0]?.name ?? preferred;
-        await loadObjects(conn.id, dbName, defaultSchema);
-        setLoading(key, false);
-        setBrowserContext({
-          connectionId: conn.id,
-          database: dbName,
-          schema: defaultSchema,
-          category: "table",
-        });
+      const cachedSchemas = schemasByConnDb[`${conn.id}::${dbName}`];
+      const preferred = conn.engine === "mssql" ? "dbo" : "public";
+      const initialSchema =
+        cachedSchemas?.find((s) => s.name === preferred)?.name ??
+        cachedSchemas?.[0]?.name ??
+        preferred;
+      setBrowserContext({
+        connectionId: conn.id,
+        database: dbName,
+        schema: initialSchema,
+        category: "table",
+      });
+      if (!cachedSchemas || !objectsByKey[`${conn.id}::${dbName}::${initialSchema}`]) {
+        const resolvedSchema = await loadDatabaseChildren(conn, dbName);
+        if (resolvedSchema !== initialSchema) {
+          setBrowserContext({
+            connectionId: conn.id,
+            database: dbName,
+            schema: resolvedSchema,
+            category: "table",
+          });
+        }
       }
     } else {
       setBrowserContext({
@@ -259,12 +325,16 @@ export const ObjectExplorer: React.FC = () => {
         schema: dbName,
         category: "table",
       });
-      if (willExpand) {
-        setLoading(key, true);
-        await loadObjects(conn.id, dbName, dbName);
-        setLoading(key, false);
+      if (!objectsByKey[`${conn.id}::${dbName}::${dbName}`]) {
+        await loadDatabaseChildren(conn, dbName);
       }
     }
+  };
+
+  const handleDoubleClickDatabase = async (conn: ConnectionProfile, dbName: string) => {
+    const key = `db:${conn.id}:${dbName}`;
+    setExpanded((prev) => new Set(prev).add(key));
+    await handleSelectDatabase(conn, dbName);
   };
 
   const handleToggleSchema = async (
@@ -275,17 +345,43 @@ export const ObjectExplorer: React.FC = () => {
     const key = `schema:${conn.id}:${dbName}:${schemaName}`;
     const willExpand = !expanded.has(key);
     toggleExpand(key);
+    if (!willExpand) return;
+
+    if (!objectsByKey[`${conn.id}::${dbName}::${schemaName}`]) {
+      setLoading(key, true);
+      await loadObjects(conn.id, dbName, schemaName);
+      setLoading(key, false);
+    }
+  };
+
+  const handleSelectSchema = async (
+    conn: ConnectionProfile,
+    dbName: string,
+    schemaName: string
+  ) => {
+    const key = `schema:${conn.id}:${dbName}:${schemaName}`;
+    setSelectedNodeKey(key);
     setBrowserContext({
       connectionId: conn.id,
       database: dbName,
       schema: schemaName,
       category: "table",
     });
-    if (!willExpand) return;
+    if (!objectsByKey[`${conn.id}::${dbName}::${schemaName}`]) {
+      setLoading(key, true);
+      await loadObjects(conn.id, dbName, schemaName);
+      setLoading(key, false);
+    }
+  };
 
-    setLoading(key, true);
-    await loadObjects(conn.id, dbName, schemaName);
-    setLoading(key, false);
+  const handleDoubleClickSchema = async (
+    conn: ConnectionProfile,
+    dbName: string,
+    schemaName: string
+  ) => {
+    const key = `schema:${conn.id}:${dbName}:${schemaName}`;
+    setExpanded((prev) => new Set(prev).add(key));
+    await handleSelectSchema(conn, dbName, schemaName);
   };
 
   const groupedConnections = useMemo(() => {
@@ -444,16 +540,20 @@ export const ObjectExplorer: React.FC = () => {
           const catKey = `cat:${key}:${cat.id}`;
           const isOpen = expanded.has(catKey) || (q.length > 0 && items.length > 0);
           const isActiveCategory =
-            browserContext.connectionId === conn.id &&
-            browserContext.database === dbName &&
-            (browserContext.schema ?? browserContext.database) === (schemaName ?? dbName) &&
-            cat.browserCategory !== undefined &&
-            browserContext.category === cat.browserCategory;
+            selectedNodeKey !== null
+              ? selectedNodeKey === catKey
+              : browserContext.connectionId === conn.id &&
+                browserContext.database === dbName &&
+                (browserContext.schema ?? browserContext.database) === (schemaName ?? dbName) &&
+                cat.browserCategory !== undefined &&
+                browserContext.category === cat.browserCategory;
           return (
             <div key={cat.id}>
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => {
-                  toggleExpand(catKey);
+                  setSelectedNodeKey(catKey);
                   if (cat.browserCategory) {
                     setBrowserContext({
                       connectionId: conn.id,
@@ -461,6 +561,23 @@ export const ObjectExplorer: React.FC = () => {
                       schema: schemaName ?? dbName,
                       category: cat.browserCategory,
                     });
+                  }
+                  if (!objectsByKey[key] && connectedIds.has(conn.id)) {
+                    loadObjects(conn.id, dbName, schemaName);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedNodeKey(catKey);
+                    if (cat.browserCategory) {
+                      setBrowserContext({
+                        connectionId: conn.id,
+                        database: dbName,
+                        schema: schemaName ?? dbName,
+                        category: cat.browserCategory,
+                      });
+                    }
                   }
                 }}
                 onContextMenu={(e) => {
@@ -474,22 +591,32 @@ export const ObjectExplorer: React.FC = () => {
                     schema: schemaName ?? dbName,
                   });
                 }}
-                className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                className={`w-full flex items-center gap-1 px-1 py-0.5 rounded text-xs cursor-pointer transition-colors ${
                   isActiveCategory
                     ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                     : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
                 }`}
               >
-                {isOpen ? (
-                  <ChevronDown className="w-3 h-3 shrink-0" />
-                ) : (
-                  <ChevronRight className="w-3 h-3 shrink-0" />
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleExpand(catKey);
+                  }}
+                  aria-label={isOpen ? `Collapse ${cat.label}` : `Expand ${cat.label}`}
+                  className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/80 text-zinc-500 shrink-0 cursor-pointer"
+                >
+                  {isOpen ? (
+                    <ChevronDown className="w-3 h-3 shrink-0" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3 shrink-0" />
+                  )}
+                </button>
                 <span className={`truncate ${isActiveCategory ? "font-semibold" : "font-medium"}`}>
                   {cat.label}
                 </span>
                 <span
-                  className={`ml-auto text-[0.72rem] ${
+                  className={`ml-auto pr-1 text-[0.72rem] ${
                     isActiveCategory
                       ? "text-sky-700 dark:text-sky-300 font-semibold"
                       : "text-zinc-500"
@@ -497,7 +624,7 @@ export const ObjectExplorer: React.FC = () => {
                 >
                   {items.length}
                 </span>
-              </button>
+              </div>
               {isOpen && (
                 <div className="pl-3 space-y-0.5">
                   {items.map((obj) => (
@@ -600,13 +727,21 @@ export const ObjectExplorer: React.FC = () => {
                   const isOpen = expanded.has(connKey);
                   const dbs = databasesByConn[conn.id] ?? [];
                   const isActiveConn =
-                    browserContext.connectionId === conn.id &&
-                    (!isConnected || !isOpen || !browserContext.database);
+                    selectedNodeKey !== null
+                      ? selectedNodeKey === connKey
+                      : browserContext.connectionId === conn.id &&
+                        (!isConnected || !isOpen || !browserContext.database);
 
                   return (
                     <div key={conn.id}>
                       <div
-                        onClick={() => handleToggleConnection(conn)}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleSelectConnection(conn)}
+                        onDoubleClick={() => handleDoubleClickConnection(conn)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleDoubleClickConnection(conn);
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setCtxMenu({
@@ -616,17 +751,27 @@ export const ObjectExplorer: React.FC = () => {
                             connection: conn,
                           });
                         }}
-                        className={`group flex items-center gap-1.5 px-1.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
+                        className={`group flex items-center gap-1 px-1 py-1 rounded-md text-xs cursor-pointer transition-colors ${
                           isActiveConn
                             ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                             : "font-medium text-zinc-800 dark:text-zinc-100 hover:bg-zinc-200/70 dark:hover:bg-zinc-800"
                         }`}
                       >
-                        {isOpen ? (
-                          <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                        ) : (
-                          <ChevronRight className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleConnection(conn);
+                          }}
+                          aria-label={isOpen ? `Collapse ${conn.name}` : `Expand ${conn.name}`}
+                          className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/80 text-zinc-500 shrink-0 cursor-pointer"
+                        >
+                          {isOpen ? (
+                            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                          )}
+                        </button>
                         <span
                           className={`w-2 h-2 rounded-full shrink-0 ${
                             isConnected
@@ -634,7 +779,7 @@ export const ObjectExplorer: React.FC = () => {
                               : "bg-zinc-500/40"
                           }`}
                         />
-                        <span className="truncate">{conn.name}</span>
+                        <span className="truncate ml-0.5">{conn.name}</span>
                         <span className="ml-auto text-[0.72rem] px-1 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-500 uppercase">
                           {conn.engine === "postgres"
                             ? "PG"
@@ -659,12 +804,21 @@ export const ObjectExplorer: React.FC = () => {
                             const isCurrentDb =
                               browserContext.connectionId === conn.id &&
                               browserContext.database === db.name;
-                            const isActiveDb = isCurrentDb && !dbOpen;
+                            const isActiveDb =
+                              selectedNodeKey !== null
+                                ? selectedNodeKey === dbKey
+                                : isCurrentDb && !dbOpen;
 
                             return (
                               <div key={db.name}>
-                                <button
-                                  onClick={() => handleToggleDatabase(conn, db.name)}
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => handleSelectDatabase(conn, db.name)}
+                                  onDoubleClick={() => handleDoubleClickDatabase(conn, db.name)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleDoubleClickDatabase(conn, db.name);
+                                  }}
                                   onContextMenu={(e) => {
                                     e.preventDefault();
                                     setCtxMenu({
@@ -681,23 +835,33 @@ export const ObjectExplorer: React.FC = () => {
                                           : db.name,
                                     });
                                   }}
-                                  className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                                  className={`w-full flex items-center gap-1 px-1 py-0.5 rounded text-xs cursor-pointer transition-colors ${
                                     isActiveDb
                                       ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                                       : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
                                   }`}
                                 >
-                                  {dbOpen ? (
-                                    <ChevronDown className="w-3 h-3 text-zinc-500 shrink-0" />
-                                  ) : (
-                                    <ChevronRight className="w-3 h-3 text-zinc-500 shrink-0" />
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleDatabase(conn, db.name);
+                                    }}
+                                    aria-label={dbOpen ? `Collapse ${db.name}` : `Expand ${db.name}`}
+                                    className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/80 text-zinc-500 shrink-0 cursor-pointer"
+                                  >
+                                    {dbOpen ? (
+                                      <ChevronDown className="w-3 h-3 shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="w-3 h-3 shrink-0" />
+                                    )}
+                                  </button>
                                   <Database className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
-                                  <span className="truncate">{db.name}</span>
+                                  <span className="truncate ml-0.5">{db.name}</span>
                                   {loadingKeys.has(dbKey) && (
                                     <RefreshCw className="w-3 h-3 ml-auto animate-spin text-indigo-500 dark:text-indigo-400" />
                                   )}
-                                </button>
+                                </div>
 
                                 {dbOpen &&
                                   (conn.engine === "postgres" || conn.engine === "mssql" ? (
@@ -706,15 +870,26 @@ export const ObjectExplorer: React.FC = () => {
                                         const scKey = `schema:${conn.id}:${db.name}:${sc.name}`;
                                         const scOpen = expanded.has(scKey);
                                         const isActiveSchema =
-                                          isCurrentDb &&
-                                          browserContext.schema === sc.name &&
-                                          !scOpen;
+                                          selectedNodeKey !== null
+                                            ? selectedNodeKey === scKey
+                                            : isCurrentDb &&
+                                              browserContext.schema === sc.name &&
+                                              !scOpen;
                                         return (
                                           <div key={sc.name}>
-                                            <button
+                                            <div
+                                              role="button"
+                                              tabIndex={0}
                                               onClick={() =>
-                                                handleToggleSchema(conn, db.name, sc.name)
+                                                handleSelectSchema(conn, db.name, sc.name)
                                               }
+                                              onDoubleClick={() =>
+                                                handleDoubleClickSchema(conn, db.name, sc.name)
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter")
+                                                  handleDoubleClickSchema(conn, db.name, sc.name);
+                                              }}
                                               onContextMenu={(e) => {
                                                 e.preventDefault();
                                                 setCtxMenu({
@@ -726,20 +901,35 @@ export const ObjectExplorer: React.FC = () => {
                                                   schema: sc.name,
                                                 });
                                               }}
-                                              className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs transition-colors ${
+                                              className={`w-full flex items-center gap-1 px-1 py-0.5 rounded text-xs cursor-pointer transition-colors ${
                                                 isActiveSchema
                                                   ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
                                                   : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
                                               }`}
                                             >
-                                              {scOpen ? (
-                                                <ChevronDown className="w-3 h-3 text-zinc-500" />
-                                              ) : (
-                                                <ChevronRight className="w-3 h-3 text-zinc-500" />
-                                              )}
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleToggleSchema(conn, db.name, sc.name);
+                                                }}
+                                                aria-label={
+                                                  scOpen ? `Collapse ${sc.name}` : `Expand ${sc.name}`
+                                                }
+                                                className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/80 text-zinc-500 shrink-0 cursor-pointer"
+                                              >
+                                                {scOpen ? (
+                                                  <ChevronDown className="w-3 h-3" />
+                                                ) : (
+                                                  <ChevronRight className="w-3 h-3" />
+                                                )}
+                                              </button>
                                               <Layers className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                              <span className="truncate">{sc.name}</span>
-                                            </button>
+                                              <span className="truncate ml-0.5">{sc.name}</span>
+                                              {loadingKeys.has(scKey) && (
+                                                <RefreshCw className="w-3 h-3 ml-auto animate-spin text-indigo-500 dark:text-indigo-400" />
+                                              )}
+                                            </div>
                                             {scOpen &&
                                               renderObjectGroups(conn, db.name, sc.name)}
                                           </div>

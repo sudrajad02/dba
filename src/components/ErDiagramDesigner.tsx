@@ -9,6 +9,7 @@ import {
   KeyRound,
   LayoutGrid,
   Link2,
+  Maximize2,
   Network,
   Plus,
   Printer,
@@ -127,6 +128,7 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     connectedIds,
     databasesByConn,
     schemasByConnDb,
+    activeTabId,
     connectTo,
     loadDatabases,
     loadSchemas,
@@ -159,8 +161,129 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const [selectedRelId, setSelectedRelId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
+  const zoomAtPoint = useCallback((nextZoomRaw: number, clientX?: number, clientY?: number) => {
+    const el = canvasRef.current;
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.min(3.0, Math.max(0.25, +nextZoomRaw.toFixed(4)));
+    if (newZoom === oldZoom) return;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const mouseX = clientX !== undefined ? clientX - rect.left : rect.width / 2;
+      const mouseY = clientY !== undefined ? clientY - rect.top : rect.height / 2;
+      const oldPan = panRef.current;
+      const worldX = (mouseX - oldPan.x) / oldZoom;
+      const worldY = (mouseY - oldPan.y) / oldZoom;
+      const nextPan = {
+        x: mouseX - worldX * newZoom,
+        y: mouseY - worldY * newZoom,
+      };
+      zoomRef.current = newZoom;
+      panRef.current = nextPan;
+      setZoom(newZoom);
+      setPan(nextPan);
+    } else {
+      zoomRef.current = newZoom;
+      setZoom(newZoom);
+    }
+  }, []);
+
+  const handleFitToView = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el || model.tables.length === 0) {
+      zoomRef.current = 1;
+      panRef.current = { x: 0, y: 0 };
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const minX = Math.min(...model.tables.map((t) => t.x));
+    const minY = Math.min(...model.tables.map((t) => t.y));
+    const maxX = Math.max(...model.tables.map((t) => t.x + CARD_WIDTH));
+    const maxY = Math.max(...model.tables.map((t) => t.y + tableHeight(t)));
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const pad = 48;
+    const scaleX = (rect.width - pad * 2) / contentW;
+    const scaleY = (rect.height - pad * 2) / contentH;
+    const nextZoom = Math.min(1.5, Math.max(0.25, +Math.min(scaleX, scaleY).toFixed(3)));
+    const nextPan = {
+      x: (rect.width - contentW * nextZoom) / 2 - minX * nextZoom,
+      y: (rect.height - contentH * nextZoom) / 2 - minY * nextZoom,
+    };
+    zoomRef.current = nextZoom;
+    panRef.current = nextPan;
+    setZoom(nextZoom);
+    setPan(nextPan);
+  }, [model.tables]);
+
+  // Native wheel listener with passive: false for Ctrl/Cmd+Wheel & trackpad pinch zoom-to-cursor + scroll-to-pan
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const factor = Math.exp(-e.deltaY * 0.0025);
+        zoomAtPoint(zoomRef.current * factor, e.clientX, e.clientY);
+      } else {
+        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
+        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY;
+        const nextPan = {
+          x: panRef.current.x - dx,
+          y: panRef.current.y - dy,
+        };
+        panRef.current = nextPan;
+        setPan(nextPan);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAtPoint]);
+
+  // Keyboard shortcuts when ER Diagram tab is active: Ctrl/Cmd + =/+, -, 0
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomAtPoint(zoomRef.current + 0.15);
+      } else if (e.key === "-") {
+        e.preventDefault();
+        zoomAtPoint(zoomRef.current - 0.15);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        zoomAtPoint(1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeTabId, tab.id, zoomAtPoint]);
 
   // Forward Engineer / Sync modal
   const [ddlPreview, setDdlPreview] = useState<string | null>(null);
@@ -607,19 +730,32 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           </div>
           <div className="flex items-center rounded border border-zinc-300 dark:border-[#3b3d44] overflow-hidden">
             <button
-              onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)))}
-              className="h-7 px-1.5 hover:bg-zinc-200 dark:hover:bg-[#32343a]"
+              onClick={() => zoomAtPoint(zoomRef.current - 0.15)}
+              title="Zoom Out (Ctrl+-)"
+              className="h-7 px-1.5 hover:bg-zinc-200 dark:hover:bg-[#32343a] cursor-pointer"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="px-1.5 font-mono text-[0.7rem]">
-              {Math.round(zoom * 100)}%
-            </span>
             <button
-              onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
-              className="h-7 px-1.5 hover:bg-zinc-200 dark:hover:bg-[#32343a]"
+              onClick={() => zoomAtPoint(1)}
+              title="Reset zoom to 100% (Ctrl+0)"
+              className="h-7 px-1.5 font-mono text-[0.7rem] hover:bg-zinc-200 dark:hover:bg-[#32343a] cursor-pointer"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={() => zoomAtPoint(zoomRef.current + 0.15)}
+              title="Zoom In (Ctrl++)"
+              className="h-7 px-1.5 hover:bg-zinc-200 dark:hover:bg-[#32343a] cursor-pointer"
             >
               <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleFitToView}
+              title="Fit to View"
+              className="h-7 px-1.5 border-l border-zinc-300 dark:border-[#3b3d44] hover:bg-zinc-200 dark:hover:bg-[#32343a] cursor-pointer"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -684,6 +820,7 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
 
         {/* Interactive Canvas */}
         <div
+          ref={canvasRef}
           className="flex-1 relative overflow-hidden bg-[#16171a] select-none cursor-grab active:cursor-grabbing"
           style={{
             backgroundImage:

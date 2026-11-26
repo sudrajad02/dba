@@ -134,6 +134,10 @@ interface WorkbenchStore {
   secondaryTabId: string | null;
   openTab: (tab: Omit<WorkbenchTab, "id"> & { id?: string }) => string;
   closeTab: (id: string) => void;
+  reorderTabs: (fromId: string, toIndex: number) => void;
+  closeOtherTabs: (keepId: string) => void;
+  closeTabsToRight: (id: string) => void;
+  closeAllTabs: () => void;
   setActiveTab: (id: string) => void;
   setSecondaryTab: (id: string | null) => void;
   updateTab: (id: string, patch: Partial<WorkbenchTab>) => void;
@@ -436,6 +440,68 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       tabs: remaining,
       activeTabId: nextActive,
       secondaryTabId: nextSecondary,
+    });
+    get().persistOpenQueryTabs();
+  },
+
+  reorderTabs: (fromId, toIndex) => {
+    if (fromId === "objects") return;
+    const state = get();
+    const fromIdx = state.tabs.findIndex((t) => t.id === fromId);
+    if (fromIdx <= 0) return;
+    const clampedTarget = Math.max(1, Math.min(toIndex, state.tabs.length - 1));
+    if (fromIdx === clampedTarget) return;
+    const next = [...state.tabs];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(clampedTarget, 0, moved);
+    set({ tabs: next });
+    get().persistOpenQueryTabs();
+  },
+
+  closeOtherTabs: (keepId) => {
+    const state = get();
+    const remaining = state.tabs.filter((t) => t.id === "objects" || t.id === keepId);
+    const keepExists = remaining.some((t) => t.id === keepId);
+    const nextActive = keepExists ? keepId : "objects";
+    const nextSecondary =
+      state.secondaryTabId && remaining.some((t) => t.id === state.secondaryTabId)
+        ? state.secondaryTabId
+        : null;
+    set({
+      tabs: remaining,
+      activeTabId: nextActive,
+      secondaryTabId: nextSecondary,
+    });
+    get().persistOpenQueryTabs();
+  },
+
+  closeTabsToRight: (id) => {
+    const state = get();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const remaining = state.tabs.slice(0, idx + 1);
+    const nextActive = remaining.some((t) => t.id === state.activeTabId)
+      ? state.activeTabId
+      : id;
+    const nextSecondary =
+      state.secondaryTabId && remaining.some((t) => t.id === state.secondaryTabId)
+        ? state.secondaryTabId
+        : null;
+    set({
+      tabs: remaining,
+      activeTabId: nextActive,
+      secondaryTabId: nextSecondary,
+    });
+    get().persistOpenQueryTabs();
+  },
+
+  closeAllTabs: () => {
+    const state = get();
+    const objectsTab = state.tabs.find((t) => t.id === "objects");
+    set({
+      tabs: objectsTab ? [objectsTab] : [{ id: "objects", kind: "objects", title: "Objects" }],
+      activeTabId: "objects",
+      secondaryTabId: null,
     });
     get().persistOpenQueryTabs();
   },

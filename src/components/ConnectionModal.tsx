@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import {
   CheckCircle2,
+  Eye,
+  EyeOff,
   KeyRound,
   Link2,
   Loader2,
@@ -69,14 +71,36 @@ export const ConnectionModal: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Password visibility & on-demand keyring reveal state
+  const [showPassword, setShowPassword] = useState(false);
+  const [showSshSecret, setShowSshSecret] = useState(false);
+  const [passwordDirty, setPasswordDirty] = useState(false);
+  const [sshSecretDirty, setSshSecretDirty] = useState(false);
+  const [passwordRevealed, setPasswordRevealed] = useState(false);
+  const [sshSecretRevealed, setSshSecretRevealed] = useState(false);
+  const [loadingPassword, setLoadingPassword] = useState(false);
+  const [loadingSshSecret, setLoadingSshSecret] = useState(false);
+
+  const resetSecrets = () => {
+    setPassword("");
+    setSshSecret("");
+    setShowPassword(false);
+    setShowSshSecret(false);
+    setPasswordDirty(false);
+    setSshSecretDirty(false);
+    setPasswordRevealed(false);
+    setSshSecretRevealed(false);
+    setLoadingPassword(false);
+    setLoadingSshSecret(false);
+  };
+
   useEffect(() => {
+    resetSecrets();
     if (!connectionModalOpen) return;
     setTab("general");
     setUriInput("");
     setTestResult(null);
     setError(null);
-    setPassword("");
-    setSshSecret("");
 
     if (editingConnection) {
       setName(editingConnection.name);
@@ -166,13 +190,67 @@ export const ConnectionModal: React.FC = () => {
       setHost(parsed.host);
       setPort(parsed.port);
       setUsername(parsed.username);
-      if (parsed.password) setPassword(parsed.password);
+      if (parsed.password) {
+        setPassword(parsed.password);
+        setPasswordDirty(true);
+      }
       setDatabase(parsed.database ?? "");
       if (parsed.sslMode) setSslMode(parsed.sslMode);
       if (!name) setName(`${parsed.engine}-${parsed.host}`);
     } catch (err) {
       setError(formatApiError(err));
     }
+  };
+
+  const handleClose = () => {
+    resetSecrets();
+    closeConnectionModal();
+  };
+
+  const handleToggleShowPassword = async () => {
+    if (showPassword) {
+      setShowPassword(false);
+      return;
+    }
+    if (editingConnection?.keyringRef && !passwordDirty && !passwordRevealed) {
+      setLoadingPassword(true);
+      setError(null);
+      try {
+        const secret = await api.getConnectionSecret(editingConnection.id, "db");
+        setPassword(secret ?? "");
+        setPasswordRevealed(true);
+        setShowPassword(true);
+      } catch (err) {
+        setError(formatApiError(err));
+      } finally {
+        setLoadingPassword(false);
+      }
+      return;
+    }
+    setShowPassword(true);
+  };
+
+  const handleToggleShowSshSecret = async () => {
+    if (showSshSecret) {
+      setShowSshSecret(false);
+      return;
+    }
+    if (editingConnection?.ssh?.keyringRef && !sshSecretDirty && !sshSecretRevealed) {
+      setLoadingSshSecret(true);
+      setError(null);
+      try {
+        const secret = await api.getConnectionSecret(editingConnection.id, "ssh");
+        setSshSecret(secret ?? "");
+        setSshSecretRevealed(true);
+        setShowSshSecret(true);
+      } catch (err) {
+        setError(formatApiError(err));
+      } finally {
+        setLoadingSshSecret(false);
+      }
+      return;
+    }
+    setShowSshSecret(true);
   };
 
   const handleTest = async () => {
@@ -182,8 +260,8 @@ export const ConnectionModal: React.FC = () => {
     try {
       const res = await api.testConnection({
         profile: buildProfile(),
-        password: password || null,
-        sshSecret: sshSecret || null,
+        password: !editingConnection || passwordDirty ? password || null : null,
+        sshSecret: !editingConnection || sshSecretDirty ? sshSecret || null : null,
       });
       setTestResult(res);
     } catch (err) {
@@ -199,10 +277,11 @@ export const ConnectionModal: React.FC = () => {
     try {
       const saved = await api.saveConnection({
         profile: buildProfile(),
-        password: password || null,
-        sshSecret: sshSecret || null,
+        password: !editingConnection || passwordDirty ? password || null : null,
+        sshSecret: !editingConnection || sshSecretDirty ? sshSecret || null : null,
       });
       await refreshConnections();
+      resetSecrets();
       closeConnectionModal();
       if (connectNow) {
         await connectTo(saved.id);
@@ -228,7 +307,8 @@ export const ConnectionModal: React.FC = () => {
             </p>
           </div>
           <button
-            onClick={closeConnectionModal}
+            type="button"
+            onClick={handleClose}
             className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500"
           >
             <X className="w-4 h-4" />
@@ -300,7 +380,12 @@ export const ConnectionModal: React.FC = () => {
             return (
               <button
                 key={t.id}
-                onClick={() => setTab(t.id)}
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  setShowPassword(false);
+                  setShowSshSecret(false);
+                }}
                 className={`pb-2 flex items-center gap-1.5 border-b-2 transition ${
                   tab === t.id
                     ? "border-indigo-500 text-indigo-500 dark:text-indigo-400 font-medium"
@@ -372,13 +457,34 @@ export const ConnectionModal: React.FC = () => {
                   <label className="block text-zinc-500 mb-1">
                     Password {editingConnection?.keyringRef ? "(saved in Keyring)" : ""}
                   </label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={editingConnection?.keyringRef ? "•••••••• (unchanged)" : ""}
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setPasswordDirty(true);
+                      }}
+                      placeholder={editingConnection?.keyringRef ? "•••••••• (unchanged)" : ""}
+                      className="w-full h-8 pl-2.5 pr-8 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleToggleShowPassword}
+                      disabled={loadingPassword}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      title={showPassword ? "Hide password" : "Show password"}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer"
+                    >
+                      {loadingPassword ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : showPassword ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -499,14 +605,39 @@ export const ConnectionModal: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-zinc-500 mb-1">
-                        SSH Passphrase / Password
+                        SSH Passphrase / Password{" "}
+                        {editingConnection?.ssh?.keyringRef ? "(saved in Keyring)" : ""}
                       </label>
-                      <input
-                        type="password"
-                        value={sshSecret}
-                        onChange={(e) => setSshSecret(e.target.value)}
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showSshSecret ? "text" : "password"}
+                          value={sshSecret}
+                          onChange={(e) => {
+                            setSshSecret(e.target.value);
+                            setSshSecretDirty(true);
+                          }}
+                          placeholder={
+                            editingConnection?.ssh?.keyringRef ? "•••••••• (unchanged)" : ""
+                          }
+                          className="w-full h-8 pl-2.5 pr-8 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleToggleShowSshSecret}
+                          disabled={loadingSshSecret}
+                          aria-label={showSshSecret ? "Hide password" : "Show password"}
+                          title={showSshSecret ? "Hide password" : "Show password"}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer"
+                        >
+                          {loadingSshSecret ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : showSshSecret ? (
+                            <EyeOff className="w-3.5 h-3.5" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

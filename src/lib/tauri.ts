@@ -89,6 +89,8 @@ export const api = {
   saveConnection: (input: ConnectionSaveInput) =>
     invoke<ConnectionProfile>("save_connection", { input }),
   deleteConnection: (id: string) => invoke<void>("delete_connection", { id }),
+  getConnectionSecret: (connectionId: string, kind: "db" | "ssh") =>
+    invoke<string | null>("get_connection_secret", { connectionId, kind }),
   parseUri: (uri: string) => invoke<ParsedConnectionUri>("parse_uri", { uri }),
   testConnection: (input: ConnectionSaveInput) =>
     invoke<ConnectionTestResult>("test_connection", { input }),

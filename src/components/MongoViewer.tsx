@@ -111,14 +111,37 @@ function formatFlatCell(val: unknown): string {
 }
 
 export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
-  const { connections, openTab, openSafetyModal, setInspectedCell, addLog } =
-    useWorkbenchStore();
+  const {
+    connections,
+    connectedIds,
+    databasesByConn,
+    objectsByKey,
+    connectTo,
+    loadDatabases,
+    loadObjects,
+    updateTab,
+    openTab,
+    openSafetyModal,
+    setInspectedCell,
+    addLog,
+  } = useWorkbenchStore();
 
+  const mongoConnections = useMemo(
+    () => connections.filter((c) => c.engine === "mongodb"),
+    [connections]
+  );
   const conn = connections.find((c) => c.id === tab.connectionId);
   const isProd = conn?.environment === "production";
   const isReadOnly = conn?.readOnly ?? false;
   const database = tab.database ?? conn?.database ?? "admin";
   const collection = tab.collection ?? tab.table ?? "";
+  const dbs = tab.connectionId ? databasesByConn[tab.connectionId] ?? [] : [];
+  const availableCollections = useMemo(() => {
+    if (!tab.connectionId || !database) return [];
+    const objs = objectsByKey[`${tab.connectionId}::${database}::`] ?? [];
+    return objs.filter((o) => o.kind === "collection");
+  }, [objectsByKey, tab.connectionId, database]);
+  const [switchingDb, setSwitchingDb] = useState(false);
 
   const [docs, setDocs] = useState<Record<string, unknown>[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -179,6 +202,89 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   useEffect(() => {
     fetchDocs();
   }, [fetchDocs]);
+
+  // Ensure database list is loaded for the active connection
+  useEffect(() => {
+    if (!tab.connectionId) return;
+    if (connectedIds.has(tab.connectionId) && !databasesByConn[tab.connectionId]) {
+      loadDatabases(tab.connectionId);
+    }
+  }, [tab.connectionId, connectedIds, databasesByConn, loadDatabases]);
+
+  // Load collections list when there is an error or empty result after switching DB
+  useEffect(() => {
+    if (!tab.connectionId || !database || !connectedIds.has(tab.connectionId)) return;
+    if (error && availableCollections.length === 0) {
+      loadObjects(tab.connectionId, database);
+    }
+  }, [error, tab.connectionId, database, connectedIds, availableCollections.length, loadObjects]);
+
+  const handleSwitchConnection = async (newConnId: string) => {
+    if (!newConnId || newConnId === tab.connectionId) return;
+    if (
+      totalStaged > 0 &&
+      !window.confirm("Discard unsaved changes and switch connection?")
+    ) {
+      return;
+    }
+    setSwitchingDb(true);
+    try {
+      if (!connectedIds.has(newConnId)) {
+        const ok = await connectTo(newConnId);
+        if (!ok) return;
+      }
+      const targetConn = connections.find((c) => c.id === newConnId);
+      const dbList =
+        databasesByConn[newConnId] && databasesByConn[newConnId].length > 0
+          ? databasesByConn[newConnId]
+          : await loadDatabases(newConnId);
+      const nextDb =
+        (tab.database && dbList.some((d) => d.name === tab.database)
+          ? tab.database
+          : targetConn?.database) ??
+        dbList[0]?.name ??
+        "admin";
+      setStagedInserts([]);
+      setStagedUpdates({});
+      setStagedDeletes(new Set());
+      setPage(1);
+      updateTab(tab.id, { connectionId: newConnId, database: nextDb });
+    } finally {
+      setSwitchingDb(false);
+    }
+  };
+
+  const handleSwitchDatabase = async (newDb: string) => {
+    if (!newDb || newDb === database || !tab.connectionId) return;
+    if (
+      totalStaged > 0 &&
+      !window.confirm("Discard unsaved changes and switch database?")
+    ) {
+      return;
+    }
+    setSwitchingDb(true);
+    try {
+      if (!connectedIds.has(tab.connectionId)) {
+        const ok = await connectTo(tab.connectionId);
+        if (!ok) return;
+      }
+      setStagedInserts([]);
+      setStagedUpdates({});
+      setStagedDeletes(new Set());
+      setPage(1);
+      updateTab(tab.id, { database: newDb });
+      loadObjects(tab.connectionId, newDb);
+    } finally {
+      setSwitchingDb(false);
+    }
+  };
+
+  const envDotClass =
+    conn?.environment === "production"
+      ? "bg-red-500"
+      : conn?.environment === "staging"
+      ? "bg-amber-400"
+      : "bg-emerald-500";
 
   const flatColumns = useMemo(() => {
     const keys = new Set<string>();
@@ -407,8 +513,8 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           )}
         </div>
 
-        {/* Staged Operations Controls */}
-        <div className="flex items-center gap-1.5">
+        {/* Staged Operations Controls & Connection/Database Switcher */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           {totalStaged > 0 && (
             <>
               <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
@@ -438,6 +544,43 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               </button>
             </>
           )}
+
+          {/* Navicat-Style Connection & Database Switcher */}
+          <div className="flex items-center gap-1 pl-1.5 border-l border-zinc-300 dark:border-zinc-700">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${envDotClass}`}
+              title={`Environment: ${conn?.environment ?? "local"}`}
+            />
+            <select
+              value={tab.connectionId ?? ""}
+              disabled={switchingDb}
+              onChange={(e) => handleSwitchConnection(e.target.value)}
+              title="Switch MongoDB Connection"
+              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[150px] truncate"
+            >
+              {mongoConnections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={database}
+              disabled={switchingDb || !tab.connectionId}
+              onChange={(e) => handleSwitchDatabase(e.target.value)}
+              title="Switch MongoDB Database"
+              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[140px] truncate font-mono"
+            >
+              {!dbs.some((d) => d.name === database) && database && (
+                <option value={database}>{database}</option>
+              )}
+              {dbs.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -485,8 +628,33 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       </div>
 
       {error && (
-        <div className="px-3 py-2 bg-red-500/10 border-b border-red-500/30 text-red-400 font-mono">
-          {error}
+        <div className="px-3 py-2 bg-red-500/10 border-b border-red-500/30 text-red-400 font-mono flex flex-wrap items-center justify-between gap-2">
+          <span>{error}</span>
+          {availableCollections.length > 0 && (
+            <div className="flex items-center gap-1.5 text-zinc-200 font-sans">
+              <span className="text-[0.75rem] text-zinc-400">Open another collection in {database}:</span>
+              <select
+                value=""
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  setPage(1);
+                  updateTab(tab.id, {
+                    collection: e.target.value,
+                    table: e.target.value,
+                    title: e.target.value,
+                  });
+                }}
+                className="h-6 px-2 rounded bg-zinc-900 border border-zinc-700 text-xs font-mono"
+              >
+                <option value="">Select collection...</option>
+                {availableCollections.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 

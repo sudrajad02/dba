@@ -35,6 +35,31 @@ async fn delete_connection(state: State<'_, AppState>, id: String) -> CmdResult<
 }
 
 #[tauri::command]
+fn get_connection_secret(
+    state: State<'_, AppState>,
+    connection_id: String,
+    kind: String,
+) -> CmdResult<Option<String>> {
+    let profile = match state
+        .storage
+        .get_connection(&connection_id)
+        .map_err(SerializableError::from)?
+    {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let keyring_ref = match kind.as_str() {
+        "db" => profile.keyring_ref.as_deref(),
+        "ssh" => profile.ssh.keyring_ref.as_deref(),
+        _ => return Ok(None),
+    };
+    match keyring_ref {
+        Some(key) => state.storage.secrets.get_secret(key).map_err(Into::into),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
 fn parse_uri(uri: String) -> CmdResult<ParsedConnectionUri> {
     parse_connection_uri(&uri).map_err(Into::into)
 }
@@ -972,6 +997,7 @@ pub fn run() {
             list_connections,
             save_connection,
             delete_connection,
+            get_connection_secret,
             parse_uri,
             test_connection,
             connect_db,
