@@ -82,8 +82,35 @@ impl StorageManager {
         self.workspace.list_saved_queries()
     }
 
-    pub fn save_query_file(&self, folder: &str, name: &str, sql: &str) -> Result<SavedQuery> {
-        self.workspace.save_query_file(folder, name, sql)
+    pub fn save_query_file(
+        &self,
+        folder: &str,
+        name: &str,
+        sql: &str,
+        connection_id: Option<&str>,
+        database: Option<&str>,
+        schema: Option<&str>,
+        engine: Option<crate::models::DbEngine>,
+        overwrite_path: Option<&str>,
+    ) -> Result<SavedQuery> {
+        self.workspace.save_query_file(
+            folder,
+            name,
+            sql,
+            connection_id,
+            database,
+            schema,
+            engine,
+            overwrite_path,
+        )
+    }
+
+    pub fn rename_saved_query(&self, old_path: &str, new_name: &str) -> Result<SavedQuery> {
+        self.workspace.rename_saved_query(old_path, new_name)
+    }
+
+    pub fn duplicate_saved_query(&self, path: &str, new_name: &str) -> Result<SavedQuery> {
+        self.workspace.duplicate_saved_query(path, new_name)
     }
 
     pub fn delete_saved_query(&self, path: &str) -> Result<()> {

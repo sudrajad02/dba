@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { format as formatSql } from "sql-formatter";
 import {
@@ -6,12 +6,22 @@ import {
   AlertTriangle,
   AlignLeft,
   Play,
+  RefreshCw,
   Save,
+  SaveAll,
   Square,
   Table2,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
+import { formatSavedQueryFilename } from "../lib/savedQueries";
+import {
+  containsSchemaChangingDdl,
+  registerSqlAutocompleteProvider,
+  removeSqlAutocompleteContext,
+  setSqlAutocompleteContext,
+} from "../lib/sqlAutocomplete";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
+import { SaveQueryModal } from "./SaveQueryModal";
 import type {
   ExplainNode,
   ExplainPlanResult,
@@ -65,7 +75,10 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     connections,
     connectedIds,
     databasesByConn,
+    savedQueries,
+    activeTabId,
     connectTo,
+    loadDatabases,
     updateTab,
     openSafetyModal,
     setInspectedCell,
@@ -86,28 +99,107 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const [explainPlan, setExplainPlan] = useState<ExplainPlanResult | null>(null);
   const [resultView, setResultView] = useState<"results" | "explain">("results");
   const [error, setError] = useState<string | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [saveModalMode, setSaveModalMode] = useState<"save" | "save_as" | null>(null);
+  const [schemaRefreshing, setSchemaRefreshing] = useState(false);
+  const [schemaTableCount, setSchemaTableCount] = useState(0);
 
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const modelUriRef = useRef<string | null>(null);
   const schemaCacheRef = useRef<Record<string, string[]>>({});
-  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const selectionDisposablesRef = useRef<{ dispose: () => void }[]>([]);
 
   const selectedConn = connections.find((c) => c.id === connId);
   const dbs = databasesByConn[connId] ?? [];
+  const effectiveDb = database || selectedConn?.database || "";
+  const effectiveSchema =
+    selectedConn?.engine === "postgres"
+      ? tab.schema || "public"
+      : selectedConn?.engine === "mssql"
+      ? tab.schema || "dbo"
+      : effectiveDb || undefined;
 
-  // Load schema cache for Monaco autocomplete
+  // Ensure databases are loaded when a connected connection is selected
   useEffect(() => {
-    if (!connId || !connectedIds.has(connId)) return;
-    api
-      .getAutocompleteSchema(
-        connId,
-        database || selectedConn?.database || undefined,
-        selectedConn?.engine === "postgres" ? "public" : database || undefined
+    if (connId && connectedIds.has(connId) && !databasesByConn[connId]) {
+      loadDatabases(connId);
+    }
+  }, [connId, connectedIds, databasesByConn, loadDatabases]);
+
+  // Existing query names in the target connection/database folder (for overwrite warning)
+  const existingNamesInTarget = useMemo(() => {
+    return savedQueries
+      .filter(
+        (sq) =>
+          (sq.connectionId ?? "") === (connId || "") &&
+          (sq.database ?? "") === (effectiveDb || "")
       )
-      .then((res) => {
+      .map((sq) => sq.name);
+  }, [savedQueries, connId, effectiveDb]);
+
+  // Keep singleton autocomplete registry synced with current tab dialect & schema
+  const syncAutocompleteContext = useCallback(
+    (tables: Record<string, string[]>) => {
+      if (!modelUriRef.current) return;
+      setSqlAutocompleteContext(modelUriRef.current, {
+        engine: selectedConn?.engine,
+        database: effectiveDb || undefined,
+        schema: effectiveSchema,
+        tables,
+      });
+    },
+    [selectedConn?.engine, effectiveDb, effectiveSchema]
+  );
+
+  // Refresh schema cache (tables + views + columns) for Monaco autocomplete
+  const refreshAutocompleteSchema = useCallback(
+    async (showToast = false) => {
+      if (!connId || !connectedIds.has(connId)) {
+        schemaCacheRef.current = {};
+        setSchemaTableCount(0);
+        syncAutocompleteContext({});
+        return;
+      }
+      setSchemaRefreshing(true);
+      try {
+        const res = await api.getAutocompleteSchema(
+          connId,
+          effectiveDb || undefined,
+          effectiveSchema
+        );
         schemaCacheRef.current = res.tables;
-      })
-      .catch(() => {});
-  }, [connId, database, connectedIds, selectedConn]);
+        const count = Object.keys(res.tables).length;
+        setSchemaTableCount(count);
+        syncAutocompleteContext(res.tables);
+        if (showToast) {
+          addLog(
+            "info",
+            `Autocomplete schema refreshed (${count} tables/views)`,
+            undefined,
+            true
+          );
+        }
+      } catch (err) {
+        if (showToast) {
+          addLog(
+            "warn",
+            `Failed to refresh autocomplete schema: ${formatApiError(err)}`,
+            undefined,
+            true
+          );
+        }
+      } finally {
+        setSchemaRefreshing(false);
+      }
+    },
+    [connId, connectedIds, effectiveDb, effectiveSchema, syncAutocompleteContext, addLog]
+  );
+
+  // Auto-sync dialect immediately and load schema cache on connection/database change
+  useEffect(() => {
+    syncAutocompleteContext(schemaCacheRef.current);
+    refreshAutocompleteSchema(false);
+  }, [syncAutocompleteContext, refreshAutocompleteSchema]);
 
   const runSqlText = useCallback(
     async (sqlToRun: string, confirmedSafety = false) => {
@@ -170,6 +262,9 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           trimmed
         );
         refreshHistory();
+        if (containsSchemaChangingDdl(trimmed)) {
+          refreshAutocompleteSchema(false);
+        }
       } catch (err) {
         const msg = formatApiError(err);
         setError(msg);
@@ -180,32 +275,54 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         setActiveQueryId(null);
       }
     },
-    [connId, database, connectedIds, connectTo, selectedConn, openSafetyModal, addLog, refreshHistory]
+    [
+      connId,
+      database,
+      connectedIds,
+      connectTo,
+      selectedConn,
+      openSafetyModal,
+      addLog,
+      refreshHistory,
+      refreshAutocompleteSchema,
+    ]
   );
 
-  const handleRun = useCallback(() => {
+  const getSelectedSql = useCallback((): string => {
     const ed = editorRef.current;
-    if (ed) {
-      const sel = ed.getSelection();
-      if (sel && !sel.isEmpty()) {
-        const selectedText = ed.getModel()?.getValueInRange(sel) ?? "";
-        if (selectedText.trim()) {
-          runSqlText(selectedText);
-          return;
-        }
-      }
-    }
-    runSqlText(sql);
-  }, [sql, runSqlText]);
+    if (!ed) return "";
+    const sel = ed.getSelection();
+    if (!sel || sel.isEmpty()) return "";
+    return ed.getModel()?.getValueInRange(sel) ?? "";
+  }, []);
 
-  const handleCancel = async () => {
+  const handleRun = useCallback(() => {
+    const selectedText = getSelectedSql();
+    if (selectedText.trim()) {
+      runSqlText(selectedText);
+      return;
+    }
+    const currentSql = editorRef.current?.getValue() ?? sql;
+    runSqlText(currentSql);
+  }, [sql, getSelectedSql, runSqlText]);
+
+  const handleRunSelected = useCallback(() => {
+    const selectedText = getSelectedSql();
+    if (selectedText.trim()) {
+      runSqlText(selectedText);
+      return;
+    }
+    addLog("info", "Select SQL text first to run selected query.", undefined, true);
+  }, [getSelectedSql, runSqlText, addLog]);
+
+  const handleCancel = useCallback(async () => {
     if (!connId || !activeQueryId) return;
     await api.cancelQuery(connId, activeQueryId).catch(() => {});
     addLog("warn", "Cancel signal sent to database server");
-  };
+  }, [connId, activeQueryId, addLog]);
 
   const handleExplain = async () => {
-    const trimmed = sql.trim();
+    const trimmed = (getSelectedSql().trim() || sql.trim());
     if (!trimmed || !connId) return;
     setRunning(true);
     setError(null);
@@ -224,9 +341,10 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     }
   };
 
-  const handleBeautify = () => {
+  const handleBeautify = useCallback(() => {
     try {
-      const formatted = formatSql(sql, {
+      const currentSql = editorRef.current?.getValue() ?? sql;
+      const formatted = formatSql(currentSql, {
         language:
           selectedConn?.engine === "mysql"
             ? "mysql"
@@ -236,69 +354,211 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         keywordCase: "upper",
       });
       setSql(formatted);
-      updateTab(tab.id, { sql: formatted });
+      updateTab(tab.id, { sql: formatted, dirty: true });
     } catch (err) {
       addLog("warn", `SQL format skipped: ${String(err)}`);
     }
+  }, [sql, selectedConn?.engine, tab.id, updateTab, addLog]);
+
+  const handleSaveQuery = useCallback(async () => {
+    const currentSql = editorRef.current?.getValue() ?? sql;
+    if (tab.savedQueryPath) {
+      try {
+        const saved = await api.saveQueryFile("", tab.title, currentSql, {
+          connectionId: connId || null,
+          database: effectiveDb || null,
+          schema: tab.schema || null,
+          engine: selectedConn?.engine ?? null,
+          overwritePath: tab.savedQueryPath,
+        });
+        const filename = formatSavedQueryFilename(saved);
+        updateTab(tab.id, {
+          title: filename,
+          sql: currentSql,
+          savedQueryPath: saved.path,
+          dirty: false,
+        });
+        await refreshSavedQueries();
+        addLog("success", `Saved ${filename}`, undefined, true);
+      } catch (err) {
+        addLog("error", formatApiError(err));
+      }
+      return;
+    }
+    setSaveModalMode("save");
+  }, [
+    sql,
+    tab.savedQueryPath,
+    tab.title,
+    tab.schema,
+    tab.id,
+    connId,
+    effectiveDb,
+    selectedConn?.engine,
+    updateTab,
+    refreshSavedQueries,
+    addLog,
+  ]);
+
+  const handleSaveAs = useCallback(() => {
+    setSaveModalMode("save_as");
+  }, []);
+
+  const handleModalSaveSubmit = useCallback(
+    async (cleanName: string) => {
+      const currentSql = editorRef.current?.getValue() ?? sql;
+      const saved = await api.saveQueryFile("", cleanName, currentSql, {
+        connectionId: connId || null,
+        database: effectiveDb || null,
+        schema: tab.schema || null,
+        engine: selectedConn?.engine ?? null,
+      });
+      const filename = formatSavedQueryFilename(saved);
+      updateTab(tab.id, {
+        title: filename,
+        sql: currentSql,
+        connectionId: connId || undefined,
+        database: effectiveDb || undefined,
+        savedQueryPath: saved.path,
+        dirty: false,
+      });
+      await refreshSavedQueries();
+      addLog("success", `Saved ${filename}`, undefined, true);
+    },
+    [sql, connId, effectiveDb, tab.schema, tab.id, selectedConn?.engine, updateTab, refreshSavedQueries, addLog]
+  );
+
+  // Keep latest action callbacks in a ref so Monaco commands never hit stale closures
+  const actionsRef = useRef({
+    handleRun,
+    handleRunSelected,
+    handleSaveQuery,
+    handleBeautify,
+    handleCancel,
+    running,
+  });
+  actionsRef.current = {
+    handleRun,
+    handleRunSelected,
+    handleSaveQuery,
+    handleBeautify,
+    handleCancel,
+    running,
   };
 
-  const handleSaveQuery = async () => {
-    const name = window.prompt("Save query as (filename without .sql):", tab.title.replace(/\.sql$/, ""));
-    if (!name?.trim()) return;
-    try {
-      const saved = await api.saveQueryFile("", name.trim(), sql);
-      updateTab(tab.id, { title: `${saved.name}.sql`, dirty: false });
-      await refreshSavedQueries();
-      addLog("success", `Saved query to ${saved.path}`);
-    } catch (err) {
-      addLog("error", formatApiError(err));
-    }
-  };
+  // Tab-scoped window shortcuts (works even when focus is outside Monaco editor)
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (saveModalMode) return;
+      const target = e.target as HTMLElement | null;
+      const inMonaco = Boolean(target?.closest(".monaco-editor"));
+      if (inMonaco) return; // handled directly by Monaco commands below
+
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        actionsRef.current.handleRunSelected();
+        return;
+      }
+      if (mod && !e.shiftKey && (e.key.toLowerCase() === "r" || e.key === "Enter")) {
+        e.preventDefault();
+        actionsRef.current.handleRun();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        actionsRef.current.handleSaveQuery();
+        return;
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        actionsRef.current.handleBeautify();
+        return;
+      }
+      if (
+        actionsRef.current.running &&
+        (e.key === "Escape" || (mod && e.key === "."))
+      ) {
+        e.preventDefault();
+        actionsRef.current.handleCancel();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeTabId, tab.id, saveModalMode]);
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+
+    const updateSelectionState = () => {
+      const sel = editor.getSelection();
+      const nonEmpty = Boolean(
+        sel &&
+          !sel.isEmpty() &&
+          (editor.getModel()?.getValueInRange(sel) ?? "").trim().length > 0
+      );
+      setHasSelection(nonEmpty);
+    };
+
+    selectionDisposablesRef.current.forEach((d) => d.dispose());
+    selectionDisposablesRef.current = [
+      editor.onDidChangeCursorSelection(updateSelectionState),
+      editor.onDidChangeModelContent(updateSelectionState),
+    ];
+
+    // Navicat & IDE Shortcuts via fresh actionsRef (no stale closures)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      handleRun();
+      actionsRef.current.handleRun();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
+      actionsRef.current.handleRun();
+    });
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR,
+      () => {
+        actionsRef.current.handleRunSelected();
+      }
+    );
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      actionsRef.current.handleSaveQuery();
+    });
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+      () => {
+        actionsRef.current.handleBeautify();
+      }
+    );
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period, () => {
+      if (actionsRef.current.running) actionsRef.current.handleCancel();
+    });
+    editor.onKeyDown((e) => {
+      if (e.keyCode === monaco.KeyCode.Escape && actionsRef.current.running) {
+        actionsRef.current.handleCancel();
+      }
     });
 
-    // Schema-Aware SQL Autocomplete Provider
-    completionDisposableRef.current?.dispose();
-    completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("sql", {
-      provideCompletionItems: (model: any, position: any) => {
-        const word = model.getWordUntilPosition(position);
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn,
-        };
-        const suggestions: any[] = [];
-        for (const [table, cols] of Object.entries(schemaCacheRef.current)) {
-          suggestions.push({
-            label: table,
-            kind: monaco.languages.CompletionItemKind.Struct,
-            insertText: table,
-            detail: "Table",
-            range,
-          });
-          for (const col of cols) {
-            suggestions.push({
-              label: col,
-              kind: monaco.languages.CompletionItemKind.Field,
-              insertText: col,
-              detail: `${table}.${col}`,
-              range,
-            });
-          }
-        }
-        return { suggestions };
-      },
-    });
+    // Register singleton dialect-aware & schema-aware SQL autocomplete provider
+    registerSqlAutocompleteProvider(monaco);
+    const modelUri = editor.getModel()?.uri.toString() ?? null;
+    modelUriRef.current = modelUri;
+    if (modelUri) {
+      setSqlAutocompleteContext(modelUri, {
+        engine: selectedConn?.engine,
+        database: effectiveDb || undefined,
+        schema: effectiveSchema,
+        tables: schemaCacheRef.current,
+      });
+    }
   };
 
   useEffect(() => {
     return () => {
-      completionDisposableRef.current?.dispose();
+      if (modelUriRef.current) {
+        removeSqlAutocompleteContext(modelUriRef.current);
+        modelUriRef.current = null;
+      }
+      selectionDisposablesRef.current.forEach((d) => d.dispose());
     };
   }, []);
 
@@ -312,6 +572,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           {running ? (
             <button
               onClick={handleCancel}
+              title="Stop Query (Esc / Ctrl+.)"
               className="h-7 px-3 rounded bg-red-600 hover:bg-red-500 text-white font-medium flex items-center gap-1.5"
             >
               <Square className="w-3 h-3 fill-current" />
@@ -320,11 +581,19 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           ) : (
             <button
               onClick={handleRun}
-              title="Run Query / Selection (Ctrl+Enter)"
-              className="h-7 px-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
+              title={
+                hasSelection
+                  ? "Run Selected Query (Ctrl+R / Ctrl+Shift+R)"
+                  : "Run Query (Ctrl+R / Ctrl+Enter)"
+              }
+              className={`h-7 px-3 rounded text-white font-medium flex items-center gap-1.5 transition-colors ${
+                hasSelection
+                  ? "bg-teal-600 hover:bg-teal-500"
+                  : "bg-emerald-600 hover:bg-emerald-500"
+              }`}
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              Run
+              {hasSelection ? "Run Selected Query" : "Run Query"}
             </button>
           )}
 
@@ -340,7 +609,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
 
           <button
             onClick={handleBeautify}
-            title="Beautify / Format SQL"
+            title="Beautify / Format SQL (Ctrl+Shift+F)"
             className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
           >
             <AlignLeft className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
@@ -349,11 +618,24 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
 
           <button
             onClick={handleSaveQuery}
-            title="Save Query to Workspace (.sql)"
+            title={
+              tab.savedQueryPath
+                ? "Save Query (Ctrl+S)"
+                : "Save Query to Workspace (Ctrl+S)"
+            }
             className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
             Save
+          </button>
+
+          <button
+            onClick={handleSaveAs}
+            title="Save a Copy As..."
+            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+          >
+            <SaveAll className="w-3.5 h-3.5" />
+            Save As
           </button>
         </div>
 
@@ -390,6 +672,15 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               </option>
             ))}
           </select>
+
+          <button
+            onClick={() => refreshAutocompleteSchema(true)}
+            disabled={!connId || !connectedIds.has(connId) || schemaRefreshing}
+            title={`Refresh Autocomplete Schema (${schemaTableCount} tables/views)`}
+            className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40 flex items-center gap-1 text-zinc-600 dark:text-zinc-300"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${schemaRefreshing ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
@@ -398,6 +689,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         <Editor
           height="100%"
           defaultLanguage="sql"
+          path={`dba-query-${tab.id}.sql`}
           theme={theme === "light" ? "light" : "vs-dark"}
           value={sql}
           onChange={(val) => {
@@ -415,6 +707,9 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             automaticLayout: true,
             tabSize: 2,
             wordWrap: "on",
+            quickSuggestions: { other: true, comments: false, strings: false },
+            suggestOnTriggerCharacters: true,
+            wordBasedSuggestions: "off",
           }}
         />
       </div>
@@ -542,11 +837,32 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             )
           ) : (
             <div className="h-full flex items-center justify-center text-zinc-500">
-              Press <kbd className="mx-1 px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">Ctrl+Enter</kbd> to run query
+              Press <kbd className="mx-1 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">Ctrl+R</kbd> or <kbd className="mx-1 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">Ctrl+Enter</kbd> to run query
             </div>
           )}
         </div>
       </div>
+
+      <SaveQueryModal
+        open={saveModalMode !== null}
+        mode={saveModalMode ?? "save"}
+        initialName={
+          saveModalMode === "save_as"
+            ? `${tab.title.replace(/\.sql$/i, "")}_copy`
+            : tab.savedQueryPath
+            ? tab.title.replace(/\.sql$/i, "")
+            : tab.title.startsWith("Query") || tab.title === "New Query"
+            ? ""
+            : tab.title.replace(/\.sql$/i, "")
+        }
+        extension=".sql"
+        connectionName={selectedConn?.name ?? null}
+        databaseName={effectiveDb || null}
+        existingNames={existingNamesInTarget}
+        allowOverwrite={true}
+        onClose={() => setSaveModalMode(null)}
+        onSubmit={handleModalSaveSubmit}
+      />
     </div>
   );
 };

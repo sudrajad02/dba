@@ -438,10 +438,48 @@ fn save_query_file(
     folder: String,
     name: String,
     sql: String,
+    connection_id: Option<String>,
+    database: Option<String>,
+    schema: Option<String>,
+    engine: Option<DbEngine>,
+    overwrite_path: Option<String>,
 ) -> CmdResult<SavedQuery> {
     state
         .storage
-        .save_query_file(&folder, &name, &sql)
+        .save_query_file(
+            &folder,
+            &name,
+            &sql,
+            connection_id.as_deref(),
+            database.as_deref(),
+            schema.as_deref(),
+            engine,
+            overwrite_path.as_deref(),
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn rename_saved_query(
+    state: State<'_, AppState>,
+    old_path: String,
+    new_name: String,
+) -> CmdResult<SavedQuery> {
+    state
+        .storage
+        .rename_saved_query(&old_path, &new_name)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+fn duplicate_saved_query(
+    state: State<'_, AppState>,
+    path: String,
+    new_name: String,
+) -> CmdResult<SavedQuery> {
+    state
+        .storage
+        .duplicate_saved_query(&path, &new_name)
         .map_err(Into::into)
 }
 
@@ -1026,6 +1064,8 @@ pub fn run() {
             search_query_history,
             list_saved_queries,
             save_query_file,
+            rename_saved_query,
+            duplicate_saved_query,
             delete_saved_query,
             list_snippets,
             save_snippet,

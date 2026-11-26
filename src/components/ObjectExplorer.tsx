@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Braces,
   ChevronDown,
   ChevronRight,
   ClipboardPaste,
@@ -9,6 +10,7 @@ import {
   Eye,
   FileCode2,
   Folder,
+  FolderOpen,
   FunctionSquare,
   KeyRound,
   Layers,
@@ -25,17 +27,29 @@ import {
   Zap,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
+import {
+  buildTabFromSavedQuery,
+  formatSavedQueryFilename,
+  isMongoSavedQuery,
+} from "../lib/savedQueries";
 import { useWorkbenchStore } from "../store/useWorkbenchStore";
-import type { ConnectionProfile, DatabaseObject, ObjectKind } from "../types/dba";
+import { SaveQueryModal } from "./SaveQueryModal";
+import type {
+  ConnectionProfile,
+  DatabaseObject,
+  ObjectKind,
+  SavedQuery,
+} from "../types/dba";
 
 interface ContextMenuState {
   x: number;
   y: number;
-  type: "connection" | "database" | "object";
-  connection: ConnectionProfile;
+  type: "connection" | "database" | "object" | "saved_query";
+  connection?: ConnectionProfile;
   database?: string;
   schema?: string;
   object?: DatabaseObject;
+  savedQuery?: SavedQuery;
 }
 
 const ENV_DOT: Record<string, string> = {
@@ -75,8 +89,11 @@ export const ObjectExplorer: React.FC = () => {
     loadSchemas,
     loadObjects,
     openTab,
+    updateTab,
+    tabs,
     openConnectionModal,
     refreshConnections,
+    refreshSavedQueries,
     openSafetyModal,
     addLog,
     savedQueries,
@@ -92,6 +109,10 @@ export const ObjectExplorer: React.FC = () => {
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [queryModal, setQueryModal] = useState<{
+    mode: "rename" | "duplicate";
+    query: SavedQuery;
+  } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -496,6 +517,63 @@ export const ObjectExplorer: React.FC = () => {
     });
   };
 
+  const handleOpenSavedQuery = (
+    sq: SavedQuery,
+    fallback?: { connectionId?: string; database?: string; schema?: string }
+  ) => {
+    openTab(buildTabFromSavedQuery(sq, fallback));
+  };
+
+  const handleDeleteSavedQuery = (sq: SavedQuery) => {
+    const filename = formatSavedQueryFilename(sq);
+    openSafetyModal({
+      title: `Delete Saved Query "${filename}"`,
+      warnings: [`This will permanently delete "${filename}" from your local workspace.`],
+      sqlPreview: sq.path,
+      onConfirm: async () => {
+        try {
+          await api.deleteSavedQuery(sq.path);
+          await refreshSavedQueries();
+          addLog("warn", `Deleted saved query "${filename}"`, undefined, true);
+        } catch (err) {
+          addLog("error", formatApiError(err));
+        }
+      },
+    });
+  };
+
+  const handleSavedQueryModalSubmit = async (cleanName: string) => {
+    if (!queryModal) return;
+    if (queryModal.mode === "rename") {
+      const renamed = await api.renameSavedQuery(queryModal.query.path, cleanName);
+      const filename = formatSavedQueryFilename(renamed);
+      for (const t of tabs) {
+        if (t.savedQueryPath === queryModal.query.path) {
+          updateTab(t.id, { title: filename, savedQueryPath: renamed.path });
+        }
+      }
+      await refreshSavedQueries();
+      addLog("success", `Renamed query to ${filename}`, undefined, true);
+    } else {
+      const dup = await api.duplicateSavedQuery(queryModal.query.path, cleanName);
+      const filename = formatSavedQueryFilename(dup);
+      await refreshSavedQueries();
+      addLog("success", `Duplicated query as ${filename}`, undefined, true);
+    }
+  };
+
+  const globalSavedQueries = useMemo(() => {
+    const connIds = new Set(connections.map((c) => c.id));
+    const q = filter.trim().toLowerCase();
+    return savedQueries.filter((sq) => {
+      const isGlobal =
+        !sq.connectionId || !sq.database || !connIds.has(sq.connectionId);
+      if (!isGlobal) return false;
+      if (q && !sq.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [savedQueries, connections, filter]);
+
   const renderObjectIcon = (kind: ObjectKind) => {
     switch (kind) {
       case "table":
@@ -678,6 +756,131 @@ export const ObjectExplorer: React.FC = () => {
             </div>
           );
         })}
+        {(() => {
+          const dbQueries = savedQueries.filter(
+            (sq) =>
+              sq.connectionId === conn.id &&
+              sq.database === dbName &&
+              (!q || sq.name.toLowerCase().includes(q))
+          );
+          const qCatKey = `cat:${key}:queries`;
+          const isQOpen = expanded.has(qCatKey) || (q.length > 0 && dbQueries.length > 0);
+          const isActiveQueries =
+            selectedNodeKey !== null
+              ? selectedNodeKey === qCatKey
+              : browserContext.connectionId === conn.id &&
+                browserContext.database === dbName &&
+                (browserContext.schema ?? browserContext.database) === (schemaName ?? dbName) &&
+                browserContext.category === "query";
+
+          return (
+            <div>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setSelectedNodeKey(qCatKey);
+                  setBrowserContext({
+                    connectionId: conn.id,
+                    database: dbName,
+                    schema: schemaName ?? dbName,
+                    category: "query",
+                  });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedNodeKey(qCatKey);
+                    setBrowserContext({
+                      connectionId: conn.id,
+                      database: dbName,
+                      schema: schemaName ?? dbName,
+                      category: "query",
+                    });
+                  }
+                }}
+                className={`w-full flex items-center gap-1 px-1 py-0.5 rounded text-xs cursor-pointer transition-colors ${
+                  isActiveQueries
+                    ? "bg-sky-500/20 text-sky-700 dark:text-sky-200 font-semibold"
+                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/80"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleExpand(qCatKey);
+                  }}
+                  aria-label={isQOpen ? "Collapse Queries" : "Expand Queries"}
+                  className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/80 text-zinc-500 shrink-0 cursor-pointer"
+                >
+                  {isQOpen ? (
+                    <ChevronDown className="w-3 h-3 shrink-0" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3 shrink-0" />
+                  )}
+                </button>
+                <span className={`truncate ${isActiveQueries ? "font-semibold" : "font-medium"}`}>
+                  Queries
+                </span>
+                <span
+                  className={`ml-auto pr-1 text-[0.72rem] ${
+                    isActiveQueries
+                      ? "text-sky-700 dark:text-sky-300 font-semibold"
+                      : "text-zinc-500"
+                  }`}
+                >
+                  {dbQueries.length}
+                </span>
+              </div>
+              {isQOpen && (
+                <div className="pl-3 space-y-0.5">
+                  {dbQueries.length === 0 ? (
+                    <div className="px-2 py-1 text-[0.72rem] text-zinc-500 italic">
+                      No saved queries
+                    </div>
+                  ) : (
+                    dbQueries.map((sq) => {
+                      const isMongo = isMongoSavedQuery(sq);
+                      return (
+                        <div
+                          key={sq.id}
+                          onDoubleClick={() =>
+                            handleOpenSavedQuery(sq, {
+                              connectionId: conn.id,
+                              database: dbName,
+                              schema: schemaName,
+                            })
+                          }
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setCtxMenu({
+                              x: Math.min(e.clientX, window.innerWidth - 200),
+                              y: Math.min(e.clientY, window.innerHeight - 170),
+                              type: "saved_query",
+                              connection: conn,
+                              database: dbName,
+                              schema: schemaName,
+                              savedQuery: sq,
+                            });
+                          }}
+                          className="group flex items-center gap-1.5 px-1.5 py-1 rounded text-xs text-zinc-800 dark:text-zinc-200 hover:bg-indigo-500/15 cursor-pointer"
+                        >
+                          {isMongo ? (
+                            <Braces className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                          ) : (
+                            <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                          )}
+                          <span className="truncate">{sq.name}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -952,30 +1155,40 @@ export const ObjectExplorer: React.FC = () => {
           </div>
         ))}
 
-        {/* Saved Queries Section */}
-        {savedQueries.length > 0 && (
+        {/* Global / Legacy Saved Queries Section */}
+        {globalSavedQueries.length > 0 && (
           <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
             <div className="px-1.5 pb-1 text-[0.72rem] font-semibold uppercase tracking-wider text-zinc-500 flex items-center gap-1">
               <FileCode2 className="w-3 h-3" />
-              Saved Queries
+              Global Saved Queries
             </div>
             <div className="space-y-0.5">
-              {savedQueries.map((sq) => (
-                <button
-                  key={sq.id}
-                  onClick={() =>
-                    openTab({
-                      kind: "query",
-                      title: `${sq.name}.sql`,
-                      sql: sq.sql,
-                    })
-                  }
-                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs text-zinc-700 dark:text-zinc-300 hover:bg-indigo-500/15 text-left"
-                >
-                  <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
-                  <span className="truncate">{sq.name}</span>
-                </button>
-              ))}
+              {globalSavedQueries.map((sq) => {
+                const isMongo = isMongoSavedQuery(sq);
+                return (
+                  <div
+                    key={sq.id}
+                    onDoubleClick={() => handleOpenSavedQuery(sq)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setCtxMenu({
+                        x: Math.min(e.clientX, window.innerWidth - 200),
+                        y: Math.min(e.clientY, window.innerHeight - 170),
+                        type: "saved_query",
+                        savedQuery: sq,
+                      });
+                    }}
+                    className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs text-zinc-700 dark:text-zinc-300 hover:bg-indigo-500/15 text-left cursor-pointer"
+                  >
+                    {isMongo ? (
+                      <Braces className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                    )}
+                    <span className="truncate">{sq.name}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -989,15 +1202,60 @@ export const ObjectExplorer: React.FC = () => {
           className="fixed z-50 w-48 py-1 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs"
           onClick={(e) => e.stopPropagation()}
         >
-          {ctxMenu.type === "connection" ? (
+          {ctxMenu.type === "saved_query" && ctxMenu.savedQuery ? (
+            <>
+              <button
+                onClick={() => {
+                  handleOpenSavedQuery(ctxMenu.savedQuery!, {
+                    connectionId: ctxMenu.connection?.id,
+                    database: ctxMenu.database,
+                    schema: ctxMenu.schema,
+                  });
+                  setCtxMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-sky-400" /> Open Query
+              </button>
+              <button
+                onClick={() => {
+                  setQueryModal({ mode: "rename", query: ctxMenu.savedQuery! });
+                  setCtxMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Edit3 className="w-3.5 h-3.5" /> Rename
+              </button>
+              <button
+                onClick={() => {
+                  setQueryModal({ mode: "duplicate", query: ctxMenu.savedQuery! });
+                  setCtxMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <Copy className="w-3.5 h-3.5 text-teal-400" /> Duplicate
+              </button>
+              <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+              <button
+                onClick={() => {
+                  handleDeleteSavedQuery(ctxMenu.savedQuery!);
+                  setCtxMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete
+              </button>
+            </>
+          ) : ctxMenu.type === "connection" && ctxMenu.connection ? (
             (() => {
-              const isConnected = connectedIds.has(ctxMenu.connection.id);
+              const ctxConn = ctxMenu.connection!;
+              const isConnected = connectedIds.has(ctxConn.id);
               return (
                 <>
                   {isConnected ? (
                     <button
                       onClick={() => {
-                        disconnectFrom(ctxMenu.connection.id);
+                        disconnectFrom(ctxConn.id);
                         setCtxMenu(null);
                       }}
                       className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -1007,7 +1265,7 @@ export const ObjectExplorer: React.FC = () => {
                   ) : (
                     <button
                       onClick={() => {
-                        connectTo(ctxMenu.connection.id);
+                        connectTo(ctxConn.id);
                         setCtxMenu(null);
                       }}
                       className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -1018,20 +1276,20 @@ export const ObjectExplorer: React.FC = () => {
                   <button
                     disabled={!isConnected}
                     onClick={() => {
-                      if (ctxMenu.connection.engine === "mongodb") {
+                      if (ctxConn.engine === "mongodb") {
                         openTab({
                           kind: "mongo_query",
-                          title: `MQL — ${ctxMenu.connection.name}`,
-                          connectionId: ctxMenu.connection.id,
-                          database: ctxMenu.connection.database ?? undefined,
+                          title: `MQL — ${ctxConn.name}`,
+                          connectionId: ctxConn.id,
+                          database: ctxConn.database ?? undefined,
                           mongoMode: "mql",
                         });
                       } else {
                         openTab({
                           kind: "query",
-                          title: `Query — ${ctxMenu.connection.name}`,
-                          connectionId: ctxMenu.connection.id,
-                          database: ctxMenu.connection.database ?? undefined,
+                          title: `Query — ${ctxConn.name}`,
+                          connectionId: ctxConn.id,
+                          database: ctxConn.database ?? undefined,
                           sql: "",
                         });
                       }
@@ -1040,12 +1298,12 @@ export const ObjectExplorer: React.FC = () => {
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     <FileCode2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />{" "}
-                    {ctxMenu.connection.engine === "mongodb" ? "New MQL Query" : "New Query"}
+                    {ctxConn.engine === "mongodb" ? "New MQL Query" : "New Query"}
                   </button>
                   <button
                     disabled={!isConnected}
                     onClick={() => {
-                      openCreateDbModal(ctxMenu.connection);
+                      openCreateDbModal(ctxConn);
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
@@ -1055,7 +1313,7 @@ export const ObjectExplorer: React.FC = () => {
                   <button
                     disabled={!isConnected}
                     onClick={() => {
-                      loadDatabases(ctxMenu.connection.id);
+                      loadDatabases(ctxConn.id);
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
@@ -1064,7 +1322,7 @@ export const ObjectExplorer: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
-                      openConnectionModal(ctxMenu.connection);
+                      openConnectionModal(ctxConn);
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -1074,7 +1332,7 @@ export const ObjectExplorer: React.FC = () => {
                   <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
                   <button
                     onClick={async () => {
-                      await api.deleteConnection(ctxMenu.connection.id);
+                      await api.deleteConnection(ctxConn.id);
                       await refreshConnections();
                       setCtxMenu(null);
                     }}
@@ -1085,12 +1343,12 @@ export const ObjectExplorer: React.FC = () => {
                 </>
               );
             })()
-          ) : ctxMenu.type === "database" ? (
+          ) : ctxMenu.type === "database" && ctxMenu.connection ? (
             <>
               <button
                 disabled={!copiedObject}
                 onClick={() => {
-                  if (ctxMenu.database) {
+                  if (ctxMenu.database && ctxMenu.connection) {
                     pasteCopiedObject(
                       ctxMenu.connection.id,
                       ctxMenu.database,
@@ -1108,7 +1366,7 @@ export const ObjectExplorer: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  if (ctxMenu.database) {
+                  if (ctxMenu.database && ctxMenu.connection) {
                     loadObjects(
                       ctxMenu.connection.id,
                       ctxMenu.database,
@@ -1121,12 +1379,12 @@ export const ObjectExplorer: React.FC = () => {
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh Objects
               </button>
-              {ctxMenu.database && (
+              {ctxMenu.database && ctxMenu.connection && (
                 <>
                   <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
                   <button
                     onClick={() => {
-                      handleDropDatabase(ctxMenu.connection, ctxMenu.database!);
+                      handleDropDatabase(ctxMenu.connection!, ctxMenu.database!);
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
@@ -1137,240 +1395,246 @@ export const ObjectExplorer: React.FC = () => {
               )}
             </>
           ) : (
-            ctxMenu.object && (
-              <>
-                <button
-                  onClick={() => {
-                    if (ctxMenu.connection.engine === "mongodb") {
-                      openTab({
-                        kind: "mongo_collection",
-                        title: ctxMenu.object!.name,
-                        connectionId: ctxMenu.connection.id,
-                        database: ctxMenu.database,
-                        collection: ctxMenu.object!.name,
-                      });
-                    } else {
-                      openTab({
-                        kind: "table",
-                        title: ctxMenu.object!.name,
-                        connectionId: ctxMenu.connection.id,
-                        database: ctxMenu.database,
-                        schema: ctxMenu.schema,
-                        table: ctxMenu.object!.name,
-                      });
-                    }
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <Table2 className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />{" "}
-                  {ctxMenu.connection.engine === "mongodb" ? "Open Collection" : "Open Table Data"}
-                </button>
-                {ctxMenu.connection.engine === "mongodb" && ctxMenu.object.kind === "collection" && (
-                  <>
+            ctxMenu.object &&
+            ctxMenu.connection &&
+            (() => {
+              const ctxConn = ctxMenu.connection!;
+              const ctxObj = ctxMenu.object!;
+              return (
+                <>
+                  <button
+                    onClick={() => {
+                      if (ctxConn.engine === "mongodb") {
+                        openTab({
+                          kind: "mongo_collection",
+                          title: ctxObj.name,
+                          connectionId: ctxConn.id,
+                          database: ctxMenu.database,
+                          collection: ctxObj.name,
+                        });
+                      } else {
+                        openTab({
+                          kind: "table",
+                          title: ctxObj.name,
+                          connectionId: ctxConn.id,
+                          database: ctxMenu.database,
+                          schema: ctxMenu.schema,
+                          table: ctxObj.name,
+                        });
+                      }
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <Table2 className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />{" "}
+                    {ctxConn.engine === "mongodb" ? "Open Collection" : "Open Table Data"}
+                  </button>
+                  {ctxConn.engine === "mongodb" && ctxObj.kind === "collection" && (
+                    <>
+                      <button
+                        onClick={() => {
+                          openTab({
+                            kind: "mongo_query",
+                            title: `Pipeline: ${ctxObj.name}`,
+                            connectionId: ctxConn.id,
+                            database: ctxMenu.database,
+                            collection: ctxObj.name,
+                            mongoMode: "pipeline",
+                          });
+                          setCtxMenu(null);
+                        }}
+                        className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-emerald-400" /> Aggregation Pipeline
+                      </button>
+                      <button
+                        onClick={() => {
+                          openTab({
+                            kind: "mongo_designer",
+                            title: `Design: ${ctxObj.name}`,
+                            connectionId: ctxConn.id,
+                            database: ctxMenu.database,
+                            collection: ctxObj.name,
+                          });
+                          setCtxMenu(null);
+                        }}
+                        className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      >
+                        <Wrench className="w-3.5 h-3.5 text-amber-400" /> Indexes & Validation
+                      </button>
+                    </>
+                  )}
+                  {ctxObj.kind === "table" && (
                     <button
                       onClick={() => {
                         openTab({
-                          kind: "mongo_query",
-                          title: `Pipeline: ${ctxMenu.object!.name}`,
-                          connectionId: ctxMenu.connection.id,
+                          kind: "designer",
+                          title: `Design: ${ctxObj.name}`,
+                          connectionId: ctxConn.id,
                           database: ctxMenu.database,
-                          collection: ctxMenu.object!.name,
-                          mongoMode: "pipeline",
+                          schema: ctxMenu.schema,
+                          table: ctxObj.name,
+                          isNewTable: false,
                         });
                         setCtxMenu(null);
                       }}
                       className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                     >
-                      <Layers className="w-3.5 h-3.5 text-emerald-400" /> Aggregation Pipeline
+                      <Wrench className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" /> Design Table
                     </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      openTab({
+                        kind: "import_export",
+                        title: `Export: ${ctxObj.name}`,
+                        connectionId: ctxConn.id,
+                        database: ctxMenu.database,
+                        schema: ctxMenu.schema,
+                        table: ctxObj.name,
+                        wizardMode: "export",
+                      });
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <FileCode2 className="w-3.5 h-3.5 text-indigo-400" /> Export Wizard...
+                  </button>
+                  <button
+                    onClick={() => {
+                      openTab({
+                        kind: "import_export",
+                        title: `Import: ${ctxObj.name}`,
+                        connectionId: ctxConn.id,
+                        database: ctxMenu.database,
+                        schema: ctxMenu.schema,
+                        table: ctxObj.name,
+                        wizardMode: "import",
+                      });
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <FileCode2 className="w-3.5 h-3.5 text-emerald-400" /> Import Wizard...
+                  </button>
+                  {ctxObj.kind === "table" && (
                     <button
                       onClick={() => {
                         openTab({
-                          kind: "mongo_designer",
-                          title: `Design: ${ctxMenu.object!.name}`,
-                          connectionId: ctxMenu.connection.id,
+                          kind: "dump_backup",
+                          title: `Dump: ${ctxObj.name}`,
+                          connectionId: ctxConn.id,
                           database: ctxMenu.database,
-                          collection: ctxMenu.object!.name,
+                          schema: ctxMenu.schema,
+                          table: ctxObj.name,
+                          wizardMode: "dump",
                         });
                         setCtxMenu(null);
                       }}
                       className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                     >
-                      <Wrench className="w-3.5 h-3.5 text-amber-400" /> Indexes & Validation
+                      <Database className="w-3.5 h-3.5 text-blue-400" /> Dump SQL File...
                     </button>
-                  </>
-                )}
-                {ctxMenu.object.kind === "table" && (
+                  )}
                   <button
                     onClick={() => {
-                      openTab({
-                        kind: "designer",
-                        title: `Design: ${ctxMenu.object!.name}`,
-                        connectionId: ctxMenu.connection.id,
-                        database: ctxMenu.database,
-                        schema: ctxMenu.schema,
-                        table: ctxMenu.object!.name,
-                        isNewTable: false,
-                      });
+                      if (ctxMenu.database) {
+                        setCopiedObject({
+                          connectionId: ctxConn.id,
+                          database: ctxMenu.database,
+                          schema: ctxMenu.schema ?? ctxMenu.database,
+                          object: ctxObj,
+                        });
+                        addLog(
+                          "info",
+                          `Copied ${ctxObj.kind} "${ctxObj.name}" — paste into any target database`
+                        );
+                      }
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                   >
-                    <Wrench className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" /> Design Table
+                    <Copy className="w-3.5 h-3.5 text-teal-400" /> Copy {ctxObj.kind}
                   </button>
-                )}
-                <button
-                  onClick={() => {
-                    openTab({
-                      kind: "import_export",
-                      title: `Export: ${ctxMenu.object!.name}`,
-                      connectionId: ctxMenu.connection.id,
-                      database: ctxMenu.database,
-                      schema: ctxMenu.schema,
-                      table: ctxMenu.object!.name,
-                      wizardMode: "export",
-                    });
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <FileCode2 className="w-3.5 h-3.5 text-indigo-400" /> Export Wizard...
-                </button>
-                <button
-                  onClick={() => {
-                    openTab({
-                      kind: "import_export",
-                      title: `Import: ${ctxMenu.object!.name}`,
-                      connectionId: ctxMenu.connection.id,
-                      database: ctxMenu.database,
-                      schema: ctxMenu.schema,
-                      table: ctxMenu.object!.name,
-                      wizardMode: "import",
-                    });
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <FileCode2 className="w-3.5 h-3.5 text-emerald-400" /> Import Wizard...
-                </button>
-                {ctxMenu.object.kind === "table" && (
+                  {copiedObject && ctxMenu.database && (
+                    <button
+                      onClick={() => {
+                        pasteCopiedObject(
+                          ctxConn.id,
+                          ctxMenu.database!,
+                          ctxMenu.schema ?? ctxMenu.database!
+                        );
+                        setCtxMenu(null);
+                      }}
+                      className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" /> Paste "{copiedObject.object.name}"
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      openTab({
-                        kind: "dump_backup",
-                        title: `Dump: ${ctxMenu.object!.name}`,
-                        connectionId: ctxMenu.connection.id,
-                        database: ctxMenu.database,
-                        schema: ctxMenu.schema,
-                        table: ctxMenu.object!.name,
-                        wizardMode: "dump",
-                      });
-                      setCtxMenu(null);
-                    }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                  >
-                    <Database className="w-3.5 h-3.5 text-blue-400" /> Dump SQL File...
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    if (ctxMenu.database && ctxMenu.object) {
-                      setCopiedObject({
-                        connectionId: ctxMenu.connection.id,
-                        database: ctxMenu.database,
-                        schema: ctxMenu.schema ?? ctxMenu.database,
-                        object: ctxMenu.object,
-                      });
-                      addLog(
-                        "info",
-                        `Copied ${ctxMenu.object.kind} "${ctxMenu.object.name}" — paste into any target database`
-                      );
-                    }
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <Copy className="w-3.5 h-3.5 text-teal-400" /> Copy {ctxMenu.object.kind}
-                </button>
-                {copiedObject && ctxMenu.database && (
-                  <button
-                    onClick={() => {
-                      pasteCopiedObject(
-                        ctxMenu.connection.id,
+                      handleCopyDdl(
+                        ctxConn,
                         ctxMenu.database!,
-                        ctxMenu.schema ?? ctxMenu.database!
+                        ctxMenu.schema,
+                        ctxObj
                       );
                       setCtxMenu(null);
                     }}
                     className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                   >
-                    <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" /> Paste "{copiedObject.object.name}"
+                    <Copy className="w-3.5 h-3.5" /> Copy DDL
                   </button>
-                )}
-                <button
-                  onClick={() => {
-                    handleCopyDdl(
-                      ctxMenu.connection,
-                      ctxMenu.database!,
-                      ctxMenu.schema,
-                      ctxMenu.object!
-                    );
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  <Copy className="w-3.5 h-3.5" /> Copy DDL
-                </button>
-                {ctxMenu.object.kind === "table" && (
-                  <>
-                    <button
-                      onClick={() => {
-                        handleDuplicateTable(
-                          ctxMenu.connection,
-                          ctxMenu.database!,
-                          ctxMenu.schema,
-                          ctxMenu.object!.name
-                        );
-                        setCtxMenu(null);
-                      }}
-                      className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    >
-                      <Copy className="w-3.5 h-3.5 text-sky-400" /> Duplicate Table
-                    </button>
-                    <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
-                    <button
-                      onClick={() => {
-                        handleTruncate(
-                          ctxMenu.connection,
-                          ctxMenu.database!,
-                          ctxMenu.schema,
-                          ctxMenu.object!.name
-                        );
-                        setCtxMenu(null);
-                      }}
-                      className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-amber-500 hover:bg-amber-500/10"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Empty / Truncate
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={() => {
-                    handleDropObject(
-                      ctxMenu.connection,
-                      ctxMenu.database!,
-                      ctxMenu.schema,
-                      ctxMenu.object!
-                    );
-                    setCtxMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Drop {ctxMenu.object.kind}
-                </button>
-              </>
-            )
+                  {ctxObj.kind === "table" && (
+                    <>
+                      <button
+                        onClick={() => {
+                          handleDuplicateTable(
+                            ctxConn,
+                            ctxMenu.database!,
+                            ctxMenu.schema,
+                            ctxObj.name
+                          );
+                          setCtxMenu(null);
+                        }}
+                        className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-sky-400" /> Duplicate Table
+                      </button>
+                      <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                      <button
+                        onClick={() => {
+                          handleTruncate(
+                            ctxConn,
+                            ctxMenu.database!,
+                            ctxMenu.schema,
+                            ctxObj.name
+                          );
+                          setCtxMenu(null);
+                        }}
+                        className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-amber-500 hover:bg-amber-500/10"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Empty / Truncate
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => {
+                      handleDropObject(
+                        ctxConn,
+                        ctxMenu.database!,
+                        ctxMenu.schema,
+                        ctxObj
+                      );
+                      setCtxMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Drop {ctxObj.kind}
+                  </button>
+                </>
+              );
+            })()
           )}
         </div>
       )}
@@ -1553,6 +1817,34 @@ export const ObjectExplorer: React.FC = () => {
             </div>
           </form>
         </div>
+      )}
+
+      {queryModal && (
+        <SaveQueryModal
+          open={true}
+          mode={queryModal.mode}
+          initialName={
+            queryModal.mode === "duplicate"
+              ? `${queryModal.query.name}_copy`
+              : queryModal.query.name
+          }
+          extension={isMongoSavedQuery(queryModal.query) ? ".mongodb.json" : ".sql"}
+          connectionName={
+            connections.find((c) => c.id === queryModal.query.connectionId)?.name ?? null
+          }
+          databaseName={queryModal.query.database ?? null}
+          existingNames={savedQueries
+            .filter(
+              (sq) =>
+                sq.path !== queryModal.query.path &&
+                (sq.connectionId ?? "") === (queryModal.query.connectionId ?? "") &&
+                (sq.database ?? "") === (queryModal.query.database ?? "")
+            )
+            .map((sq) => sq.name)}
+          allowOverwrite={false}
+          onClose={() => setQueryModal(null)}
+          onSubmit={handleSavedQueryModalSubmit}
+        />
       )}
     </aside>
   );

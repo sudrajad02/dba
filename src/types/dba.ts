@@ -261,6 +261,9 @@ export interface SavedQuery {
   id: string;
   name: string;
   folder: string;
+  connectionId?: string | null;
+  database?: string | null;
+  schema?: string | null;
   engine?: DbEngine | null;
   sql: string;
   path: string;

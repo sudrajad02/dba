@@ -989,13 +989,18 @@ impl SqlDriver for PostgresDriver {
         schema: Option<&str>,
     ) -> Result<AutocompleteSchema> {
         let client = self.get_client(database).await?;
-        let schema_name = schema.unwrap_or("public");
+        let schema_name = schema.filter(|s| !s.is_empty()).unwrap_or("public");
         let rows = client
             .query(
-                "SELECT table_name, column_name
-                 FROM information_schema.columns
-                 WHERE table_schema = $1
-                 ORDER BY table_name, ordinal_position",
+                "SELECT c.relname, a.attname
+                 FROM pg_catalog.pg_class c
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+                 WHERE n.nspname = $1
+                   AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                   AND a.attnum > 0
+                   AND NOT a.attisdropped
+                 ORDER BY c.relname, a.attnum",
                 &[&schema_name],
             )
             .await

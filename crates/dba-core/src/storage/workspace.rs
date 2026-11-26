@@ -1,11 +1,12 @@
-use crate::error::Result;
+use crate::error::{DbaError, Result};
 use crate::models::{
-    BatchJob, ChartDashboard, CodeSnippet, ConnectionProfile, DataJobProfile, ErModel, SavedQuery,
+    BatchJob, ChartDashboard, CodeSnippet, ConnectionProfile, DataJobProfile, DbEngine, ErModel,
+    SavedQuery,
 };
 use crate::storage::paths::DbaPaths;
 use chrono::{DateTime, Utc};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 pub struct WorkspaceStore {
     paths: DbaPaths,
@@ -41,6 +42,148 @@ impl WorkspaceStore {
         Ok(out)
     }
 
+    fn is_supported_query_file(path: &Path) -> bool {
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if file_name.ends_with(".mongodb.json") {
+            return true;
+        }
+        path.extension()
+            .map(|e| e == "sql" || e == "js")
+            .unwrap_or(false)
+    }
+
+    fn extract_query_name_and_engine(path: &Path) -> (String, Option<DbEngine>) {
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let Some(stem) = file_name.strip_suffix(".mongodb.json") {
+            return (stem.to_string(), Some(DbEngine::Mongodb));
+        }
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        (name, None)
+    }
+
+    fn parse_folder_binding(folder: &str) -> (Option<String>, Option<String>) {
+        let parts: Vec<&str> = folder
+            .split('/')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        match parts.as_slice() {
+            [] => (None, None),
+            [conn_id] => (Some((*conn_id).to_string()), None),
+            [conn_id, db, ..] => (Some((*conn_id).to_string()), Some((*db).to_string())),
+        }
+    }
+
+    fn sanitize_segment(raw: &str) -> Result<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+            return Err(DbaError::Storage(
+                "Invalid query path segment".to_string(),
+            ));
+        }
+        if trimmed.contains("..")
+            || trimmed.contains('/')
+            || trimmed.contains('\\')
+            || trimmed.contains('\0')
+        {
+            return Err(DbaError::Storage(
+                "Query name or folder cannot contain path separators or '..'".to_string(),
+            ));
+        }
+        let cleaned: String = trimmed
+            .chars()
+            .map(|c| match c {
+                ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                _ => c,
+            })
+            .collect();
+        let cleaned = cleaned.trim().to_string();
+        if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+            return Err(DbaError::Storage("Invalid query name".to_string()));
+        }
+        Ok(cleaned)
+    }
+
+    fn validate_existing_query_path(&self, raw_path: &str) -> Result<PathBuf> {
+        if raw_path.trim().is_empty() || raw_path.contains('\0') {
+            return Err(DbaError::Storage("Invalid query path".to_string()));
+        }
+        let p = Path::new(raw_path);
+        for comp in p.components() {
+            if matches!(comp, Component::ParentDir) {
+                return Err(DbaError::Storage(
+                    "Path traversal is not allowed".to_string(),
+                ));
+            }
+        }
+        fs::create_dir_all(&self.paths.queries_dir)?;
+        let root_canon = fs::canonicalize(&self.paths.queries_dir)?;
+        let target_canon = fs::canonicalize(p).map_err(|_| {
+            DbaError::Storage(format!("Saved query file not found: {}", raw_path))
+        })?;
+        if !target_canon.starts_with(&root_canon) || target_canon == root_canon {
+            return Err(DbaError::Storage(
+                "Access denied: path is outside workspace queries directory".to_string(),
+            ));
+        }
+        Ok(target_canon)
+    }
+
+    fn build_saved_query_from_path(
+        &self,
+        file_path: &Path,
+        sql: String,
+        schema_override: Option<String>,
+        engine_override: Option<DbEngine>,
+    ) -> Result<SavedQuery> {
+        let root_canon = fs::canonicalize(&self.paths.queries_dir)
+            .unwrap_or_else(|_| self.paths.queries_dir.clone());
+        let file_canon = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+        let rel = file_canon
+            .strip_prefix(&root_canon)
+            .or_else(|_| file_path.strip_prefix(&self.paths.queries_dir))
+            .unwrap_or(file_path);
+        let folder = rel
+            .parent()
+            .map(|p| {
+                p.components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .unwrap_or_default();
+        let (connection_id, database) = Self::parse_folder_binding(&folder);
+        let (name, inferred_engine) = Self::extract_query_name_and_engine(&file_canon);
+        let meta = fs::metadata(&file_canon)?;
+        let modified: DateTime<Utc> = meta
+            .modified()
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(|_| Utc::now());
+        let full_path = file_canon.to_string_lossy().to_string();
+        Ok(SavedQuery {
+            id: full_path.clone(),
+            name,
+            folder,
+            connection_id,
+            database,
+            schema: schema_override,
+            engine: engine_override.or(inferred_engine),
+            sql,
+            path: full_path,
+            updated_at: modified.to_rfc3339(),
+        })
+    }
+
     fn walk_queries(&self, dir: &Path, folder: &str, out: &mut Vec<SavedQuery>) -> Result<()> {
         if !dir.exists() {
             return Ok(());
@@ -56,28 +199,24 @@ impl WorkspaceStore {
                     format!("{}/{}", folder, name)
                 };
                 self.walk_queries(&path, &next_folder, out)?;
-            } else if path
-                .extension()
-                .map(|e| e == "sql" || e == "js")
-                .unwrap_or(false)
-            {
+            } else if Self::is_supported_query_file(&path) {
                 let sql = fs::read_to_string(&path).unwrap_or_default();
                 let meta = fs::metadata(&path)?;
                 let modified: DateTime<Utc> = meta
                     .modified()
                     .map(DateTime::<Utc>::from)
                     .unwrap_or_else(|_| Utc::now());
-                let name = path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
+                let (name, engine) = Self::extract_query_name_and_engine(&path);
+                let (connection_id, database) = Self::parse_folder_binding(folder);
                 let full_path = path.to_string_lossy().to_string();
                 out.push(SavedQuery {
                     id: full_path.clone(),
                     name,
                     folder: folder.to_string(),
-                    engine: None,
+                    connection_id,
+                    database,
+                    schema: None,
+                    engine,
                     sql,
                     path: full_path,
                     updated_at: modified.to_rfc3339(),
@@ -87,36 +226,142 @@ impl WorkspaceStore {
         Ok(())
     }
 
-    pub fn save_query_file(&self, folder: &str, name: &str, sql: &str) -> Result<SavedQuery> {
-        let clean_name = name
+    pub fn save_query_file(
+        &self,
+        folder: &str,
+        name: &str,
+        sql: &str,
+        connection_id: Option<&str>,
+        database: Option<&str>,
+        schema: Option<&str>,
+        engine: Option<DbEngine>,
+        overwrite_path: Option<&str>,
+    ) -> Result<SavedQuery> {
+        fs::create_dir_all(&self.paths.queries_dir)?;
+
+        if let Some(existing_path) = overwrite_path.map(str::trim).filter(|s| !s.is_empty()) {
+            let target = self.validate_existing_query_path(existing_path)?;
+            fs::write(&target, sql)?;
+            return self.build_saved_query_from_path(
+                &target,
+                sql.to_string(),
+                schema.map(|s| s.to_string()),
+                engine,
+            );
+        }
+
+        let is_mongo = engine == Some(DbEngine::Mongodb)
+            || name.trim().to_lowercase().ends_with(".mongodb.json");
+        let stripped_name = name
             .trim()
-            .trim_end_matches(".sql")
-            .replace(['/', '\\', '\0'], "_");
-        let target_dir = if folder.trim().is_empty() {
-            self.paths.queries_dir.clone()
-        } else {
-            let d = self.paths.queries_dir.join(folder.trim());
-            fs::create_dir_all(&d)?;
-            d
-        };
-        let file_path = target_dir.join(format!("{}.sql", clean_name));
+            .trim_end_matches(".mongodb.json")
+            .trim_end_matches(".sql");
+        let clean_name = Self::sanitize_segment(stripped_name)?;
+
+        let mut target_dir = self.paths.queries_dir.clone();
+        if let Some(cid) = connection_id.map(str::trim).filter(|s| !s.is_empty()) {
+            target_dir = target_dir.join(Self::sanitize_segment(cid)?);
+            if let Some(db) = database.map(str::trim).filter(|s| !s.is_empty()) {
+                target_dir = target_dir.join(Self::sanitize_segment(db)?);
+            }
+        } else if !folder.trim().is_empty() {
+            for seg in folder.trim().split('/').filter(|s| !s.is_empty()) {
+                target_dir = target_dir.join(Self::sanitize_segment(seg)?);
+            }
+        }
+
+        fs::create_dir_all(&target_dir)?;
+        let root_canon = fs::canonicalize(&self.paths.queries_dir)?;
+        let dir_canon = fs::canonicalize(&target_dir)?;
+        if !dir_canon.starts_with(&root_canon) {
+            return Err(DbaError::Storage(
+                "Access denied: target folder is outside workspace queries directory".to_string(),
+            ));
+        }
+
+        let ext = if is_mongo { "mongodb.json" } else { "sql" };
+        let file_path = dir_canon.join(format!("{}.{}", clean_name, ext));
         fs::write(&file_path, sql)?;
-        let full_path = file_path.to_string_lossy().to_string();
-        Ok(SavedQuery {
-            id: full_path.clone(),
-            name: clean_name,
-            folder: folder.trim().to_string(),
-            engine: None,
-            sql: sql.to_string(),
-            path: full_path,
-            updated_at: Utc::now().to_rfc3339(),
-        })
+        self.build_saved_query_from_path(
+            &file_path,
+            sql.to_string(),
+            schema.map(|s| s.to_string()),
+            engine.or(if is_mongo { Some(DbEngine::Mongodb) } else { None }),
+        )
+    }
+
+    pub fn rename_saved_query(&self, old_path: &str, new_name: &str) -> Result<SavedQuery> {
+        let src = self.validate_existing_query_path(old_path)?;
+        let is_mongo = src
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase().ends_with(".mongodb.json"))
+            .unwrap_or(false);
+        let stripped = new_name
+            .trim()
+            .trim_end_matches(".mongodb.json")
+            .trim_end_matches(".sql");
+        let clean_name = Self::sanitize_segment(stripped)?;
+        let ext = if is_mongo {
+            "mongodb.json".to_string()
+        } else {
+            src.extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_else(|| "sql".to_string())
+        };
+        let parent = src.parent().ok_or_else(|| {
+            DbaError::Storage("Invalid query file parent directory".to_string())
+        })?;
+        let dst = parent.join(format!("{}.{}", clean_name, ext));
+        if dst != src && dst.exists() {
+            return Err(DbaError::Storage(format!(
+                "A saved query named \"{}.{}\" already exists in this folder",
+                clean_name, ext
+            )));
+        }
+        if dst != src {
+            fs::rename(&src, &dst)?;
+        }
+        let sql = fs::read_to_string(&dst).unwrap_or_default();
+        self.build_saved_query_from_path(&dst, sql, None, None)
+    }
+
+    pub fn duplicate_saved_query(&self, path: &str, new_name: &str) -> Result<SavedQuery> {
+        let src = self.validate_existing_query_path(path)?;
+        let is_mongo = src
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase().ends_with(".mongodb.json"))
+            .unwrap_or(false);
+        let stripped = new_name
+            .trim()
+            .trim_end_matches(".mongodb.json")
+            .trim_end_matches(".sql");
+        let clean_name = Self::sanitize_segment(stripped)?;
+        let ext = if is_mongo {
+            "mongodb.json".to_string()
+        } else {
+            src.extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_else(|| "sql".to_string())
+        };
+        let parent = src.parent().ok_or_else(|| {
+            DbaError::Storage("Invalid query file parent directory".to_string())
+        })?;
+        let dst = parent.join(format!("{}.{}", clean_name, ext));
+        if dst.exists() {
+            return Err(DbaError::Storage(format!(
+                "A saved query named \"{}.{}\" already exists in this folder",
+                clean_name, ext
+            )));
+        }
+        fs::copy(&src, &dst)?;
+        let sql = fs::read_to_string(&dst).unwrap_or_default();
+        self.build_saved_query_from_path(&dst, sql, None, None)
     }
 
     pub fn delete_saved_query(&self, path: &str) -> Result<()> {
-        let p = Path::new(path);
-        if p.exists() && p.starts_with(&self.paths.queries_dir) {
-            fs::remove_file(p)?;
+        let target = self.validate_existing_query_path(path)?;
+        if target.exists() {
+            fs::remove_file(target)?;
         }
         Ok(())
     }
@@ -378,5 +623,117 @@ impl WorkspaceStore {
             fs::remove_file(file)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store() -> (WorkspaceStore, PathBuf) {
+        let root = std::env::temp_dir().join(format!("dba_ws_test_{}", uuid::Uuid::new_v4()));
+        let workspace_dir = root.join("workspace");
+        let paths = DbaPaths {
+            sqlite_db: root.join("dba.db"),
+            connections_file: workspace_dir.join("connections.json"),
+            queries_dir: workspace_dir.join("queries"),
+            snippets_dir: workspace_dir.join("snippets"),
+            models_dir: workspace_dir.join("models"),
+            charts_dir: workspace_dir.join("charts"),
+            jobs_dir: workspace_dir.join("jobs"),
+            workspace_dir,
+            data_dir: root.clone(),
+        };
+        paths.ensure_dirs().unwrap();
+        (WorkspaceStore::new(paths), root)
+    }
+
+    #[test]
+    fn saved_queries_crud_and_legacy_and_traversal_guard() {
+        let (store, root) = temp_store();
+
+        // 1. Save structured SQL query under <conn_id>/<db>/
+        let saved = store
+            .save_query_file(
+                "",
+                "monthly_report",
+                "SELECT 1;",
+                Some("conn-1"),
+                Some("sales_db"),
+                None,
+                Some(DbEngine::Mysql),
+                None,
+            )
+            .unwrap();
+        assert_eq!(saved.name, "monthly_report");
+        assert_eq!(saved.connection_id.as_deref(), Some("conn-1"));
+        assert_eq!(saved.database.as_deref(), Some("sales_db"));
+        assert!(saved.path.ends_with("monthly_report.sql"));
+
+        // 2. Overwrite directly via overwrite_path
+        let updated = store
+            .save_query_file(
+                "",
+                "monthly_report",
+                "SELECT 2;",
+                Some("conn-1"),
+                Some("sales_db"),
+                None,
+                Some(DbEngine::Mysql),
+                Some(&saved.path),
+            )
+            .unwrap();
+        assert_eq!(updated.path, saved.path);
+        assert_eq!(updated.sql, "SELECT 2;");
+
+        // 3. Save MongoDB query (.mongodb.json)
+        let mongo = store
+            .save_query_file(
+                "",
+                "active_users",
+                r#"{"mode":"mql"}"#,
+                Some("mongo-1"),
+                Some("app_db"),
+                None,
+                Some(DbEngine::Mongodb),
+                None,
+            )
+            .unwrap();
+        assert_eq!(mongo.name, "active_users");
+        assert_eq!(mongo.engine, Some(DbEngine::Mongodb));
+        assert!(mongo.path.ends_with("active_users.mongodb.json"));
+
+        // 4. Legacy root query remains readable
+        fs::write(store.paths.queries_dir.join("legacy.sql"), "SELECT 42;").unwrap();
+        let all = store.list_saved_queries().unwrap();
+        assert_eq!(all.len(), 3);
+        let legacy = all.iter().find(|q| q.name == "legacy").unwrap();
+        assert_eq!(legacy.connection_id, None);
+        assert_eq!(legacy.database, None);
+
+        // 5. Duplicate & Rename
+        let dup = store
+            .duplicate_saved_query(&saved.path, "monthly_report_v2")
+            .unwrap();
+        assert_eq!(dup.name, "monthly_report_v2");
+        assert_eq!(dup.sql, "SELECT 2;");
+
+        let renamed = store
+            .rename_saved_query(&dup.path, "monthly_report_final")
+            .unwrap();
+        assert_eq!(renamed.name, "monthly_report_final");
+        assert!(!Path::new(&dup.path).exists());
+
+        // 6. Path traversal must be rejected
+        assert!(store
+            .save_query_file("", "../evil", "SELECT 1;", None, None, None, None, None)
+            .is_err());
+        assert!(store.delete_saved_query("/etc/passwd").is_err());
+
+        // 7. Delete
+        store.delete_saved_query(&renamed.path).unwrap();
+        assert!(!Path::new(&renamed.path).exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 }

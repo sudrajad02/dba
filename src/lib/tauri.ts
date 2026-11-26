@@ -258,8 +258,32 @@ export const api = {
   searchQueryHistory: (query?: string, limit = 100) =>
     invoke<QueryHistoryEntry[]>("search_query_history", { query, limit }),
   listSavedQueries: () => invoke<SavedQuery[]>("list_saved_queries"),
-  saveQueryFile: (folder: string, name: string, sql: string) =>
-    invoke<SavedQuery>("save_query_file", { folder, name, sql }),
+  saveQueryFile: (
+    folder: string,
+    name: string,
+    sql: string,
+    options?: {
+      connectionId?: string | null;
+      database?: string | null;
+      schema?: string | null;
+      engine?: DbEngine | null;
+      overwritePath?: string | null;
+    }
+  ) =>
+    invoke<SavedQuery>("save_query_file", {
+      folder,
+      name,
+      sql,
+      connectionId: options?.connectionId ?? null,
+      database: options?.database ?? null,
+      schema: options?.schema ?? null,
+      engine: options?.engine ?? null,
+      overwritePath: options?.overwritePath ?? null,
+    }),
+  renameSavedQuery: (oldPath: string, newName: string) =>
+    invoke<SavedQuery>("rename_saved_query", { oldPath, newName }),
+  duplicateSavedQuery: (path: string, newName: string) =>
+    invoke<SavedQuery>("duplicate_saved_query", { path, newName }),
   deleteSavedQuery: (path: string) => invoke<void>("delete_saved_query", { path }),
 
   listSnippets: () => invoke<CodeSnippet[]>("list_snippets"),

@@ -56,6 +56,7 @@ export interface WorkbenchTab {
   table?: string;
   collection?: string;
   sql?: string;
+  savedQueryPath?: string;
   mongoMode?: "mql" | "pipeline";
   wizardMode?:
     | "export"
@@ -149,7 +150,12 @@ interface WorkbenchStore {
   setInspectedTableMeta: (meta: TableMetadata | null) => void;
   consoleLogs: ConsoleLogEntry[];
   toasts: ConsoleLogEntry[];
-  addLog: (level: ConsoleLogEntry["level"], message: string, sql?: string) => void;
+  addLog: (
+    level: ConsoleLogEntry["level"],
+    message: string,
+    sql?: string,
+    showToast?: boolean
+  ) => void;
   dismissToast: (id: string) => void;
   clearLogs: () => void;
 
@@ -386,6 +392,16 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   openTab: (tabInput) => {
     const state = get();
+    // Reuse already-open saved query tab by path
+    if (tabInput.savedQueryPath) {
+      const existingSaved = state.tabs.find(
+        (t) => t.savedQueryPath === tabInput.savedQueryPath
+      );
+      if (existingSaved) {
+        set({ activeTabId: existingSaved.id });
+        return existingSaved.id;
+      }
+    }
     // Reuse existing table/designer/mongo tab if identical
     if (
       tabInput.kind === "table" ||
@@ -532,7 +548,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   consoleLogs: [],
   toasts: [],
-  addLog: (level, message, sql) => {
+  addLog: (level, message, sql, showToast) => {
     const entry: ConsoleLogEntry = {
       id: makeId(),
       timestamp: new Date().toLocaleTimeString(),
@@ -540,16 +556,17 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       message,
       sql,
     };
+    const shouldToast = showToast ?? level === "error";
     set((s) => ({
       consoleLogs: [entry, ...s.consoleLogs.slice(0, 199)],
-      toasts: level === "error" ? [...s.toasts.slice(-3), entry] : s.toasts,
+      toasts: shouldToast ? [...s.toasts.slice(-3), entry] : s.toasts,
     }));
-    if (level === "error") {
+    if (shouldToast) {
       window.setTimeout(() => {
         set((s) => ({
           toasts: s.toasts.filter((t) => t.id !== entry.id),
         }));
-      }, 7000);
+      }, level === "error" ? 7000 : 3200);
     }
   },
   dismissToast: (id) =>

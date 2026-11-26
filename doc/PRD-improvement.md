@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD) — DBa Improvements & Ergonomics
 
-> **Status:** In Progress — **Phase 1 ✅ Selesai** | **Phase 2 ✅ Selesai** | **Phase 3 ⏳ Belum** | **Phase 4 ⏳ Belum**  
+> **Status:** Completed — **Phase 1 ✅ Selesai** | **Phase 2 ✅ Selesai** | **Phase 3 ✅ Selesai** | **Phase 4 ✅ Selesai**  
 > **Dokumen Induk:** [PRD.md](file:///home/angg/Projects/Desktop/DBa/doc/PRD.md) (Phase 1–5 Selesai ✅)  
 > **Sumber Kebutuhan:** [improvement.md](file:///home/angg/Projects/Desktop/DBa/doc/improvement.md) (13 Poin Pengembangan)  
 > **Target Pengguna:** Personal Daily-Driver (Single-User, Local-First, Cross-Platform Linux/macOS/Windows)  
@@ -23,8 +23,8 @@ Setelah seluruh fitur inti dan *power features* pada PRD awal (Phase 1–5) sele
 | :---: | :--- | :---: |
 | **Phase 1** | CI/CD Node 24 Modernization & Workbench Navigation Polish | ✅ **Selesai (100%)** |
 | **Phase 2** | Table Data Viewer Ergonomics (Navicat-Style Grid) | ✅ **Selesai (100%)** |
-| **Phase 3** | Query Editor Ergonomics & Navicat-Style Local Saved Queries | ⏳ Belum Dimulai |
-| **Phase 4** | Dialect-Aware & Schema-Aware SQL Autocomplete Engine | ⏳ Belum Dimulai |
+| **Phase 3** | Query Editor Ergonomics & Navicat-Style Local Saved Queries | ✅ **Selesai (100%)** |
+| **Phase 4** | Dialect-Aware & Schema-Aware SQL Autocomplete Engine | ✅ **Selesai (100%)** |
 
 ### Pemetaan Kebutuhan `improvement.md` → Phase
 
@@ -39,10 +39,10 @@ Setelah seluruh fitur inti dan *power features* pada PRD awal (Phase 1–5) sele
 | 7 | Klik kanan pada cell/baris tabel (`Set to NULL` & opsi lengkap ala Navicat) | `DataViewer.tsx` | **Phase 2** | ✅ |
 | 8 | Blok 1 atau lebih kolom/cell & menu klik kanan header kolom (`Copy Column Name`, dsb.) | `DataViewer.tsx` | **Phase 2** | ✅ |
 | 9 | Kontrol keyboard di tabel (`↑`/`↓` baris, `Ctrl+←/→` kolom, `Enter` baris bawah, `Ctrl+Enter` simpan) | `DataViewer.tsx` | **Phase 2** | ✅ |
-| 10 | Jalankan query pakai shortcut mirip Navicat | `QueryEditor.tsx`, `MongoQueryEditor.tsx`, `ObjectsBrowser.tsx` | **Phase 3** | ⏳ |
-| 11 | Tombol berubah dinamis: `Run Selected Query` ↔ `Run Query` | `QueryEditor.tsx` | **Phase 3** | ⏳ |
-| 12 | Save query di lokal ala Navicat | `QueryEditor.tsx`, `MongoQueryEditor.tsx`, `ObjectExplorer.tsx`, `ObjectsBrowser.tsx`, `workspace.rs` | **Phase 3** | ⏳ |
-| 13 | SQL suggestion (`sel...` → `SELECT`, `cre...` → `CREATE`, tabel, kolom) | `src/lib/sqlAutocomplete.ts`, `QueryEditor.tsx`, `dba-core` drivers | **Phase 4** | ⏳ |
+| 10 | Jalankan query pakai shortcut mirip Navicat | `QueryEditor.tsx`, `MongoQueryEditor.tsx`, `ObjectsBrowser.tsx` | **Phase 3** | ✅ |
+| 11 | Tombol berubah dinamis: `Run Selected Query` ↔ `Run Query` | `QueryEditor.tsx` | **Phase 3** | ✅ |
+| 12 | Save query di lokal ala Navicat | `QueryEditor.tsx`, `MongoQueryEditor.tsx`, `ObjectExplorer.tsx`, `ObjectsBrowser.tsx`, `workspace.rs` | **Phase 3** | ✅ |
+| 13 | SQL suggestion (`sel...` → `SELECT`, `cre...` → `CREATE`, tabel, kolom) | `src/lib/sqlAutocomplete.ts`, `QueryEditor.tsx`, `dba-core` drivers | **Phase 4** | ✅ |
 
 ### Non-Goals (Di Luar Scope Iterasi Ini)
 - Cloud sync / multi-user sharing untuk Saved Queries (penyimpanan tetap 100% lokal di folder workspace DBa).
@@ -485,21 +485,21 @@ Menggunakan pendekatan bertahap **Infra & Navigation Polish → Table Data Viewe
 
 ---
 
-### Phase 3 — Query Editor Ergonomics & Navicat-Style Local Saved Queries ⏳ Belum
+### Phase 3 — Query Editor Ergonomics & Navicat-Style Local Saved Queries ✅ Selesai
 *Target: Pengalaman menulis, menjalankan, dan menyimpan query terasa secepat dan senatural Navicat.*
 
-- [ ] **Navicat Shortcuts & Bug Fixes:**
-  - [ ] Perbaiki *stale closure* pada handler shortcut Monaco di `src/components/QueryEditor.tsx` menggunakan ref terkini.
-  - [ ] Terapkan standar shortcut penuh di `QueryEditor.tsx` & `MongoQueryEditor.tsx`: `Ctrl+R` / `Ctrl+Enter` (Run / Run Selected), `Ctrl+Shift+R` (Run Selected), `Ctrl+S` (Save), `Ctrl+Shift+F` (Beautify), `Esc` / `Ctrl+.` (Stop Query).
-  - [ ] Batasi scope shortcut `Ctrl+R` di `src/components/ObjectsBrowser.tsx` agar hanya aktif ketika tab `objects` yang sedang fokus.
-- [ ] **Dynamic Run Button:**
-  - [ ] Track seleksi editor secara real-time (`onDidChangeCursorSelection` & `onDidChangeModelContent`) di `QueryEditor.tsx`.
-  - [ ] Ubah label tombol secara dinamis antara **`Run Query`** (tanpa blok teks) dan **`Run Selected Query`** (saat ada teks diblok) beserta tooltip shortcut yang sesuai.
-- [ ] **Navicat-Style Local Saved Queries:**
-  - [ ] Perluas model `SavedQuery` & storage di `crates/dba-core/src/storage/workspace.rs` untuk menyimpan query terstruktur per `<connection_id>/<database>/` sekaligus tetap membaca file legacy di root `workspace/queries/`.
-  - [ ] Tambah Tauri commands `rename_saved_query` dan `duplicate_saved_query` serta perluas `save_query_file` untuk overwrite & binding metadata koneksi/database (`.sql` dan `.mongodb.json`).
-  - [ ] Buat komponen **Save Query Modal** (gantikan `window.prompt`), dukung alur Navicat: First Save → Modal, `Ctrl+S` berikutnya → overwrite langsung + toast, serta tombol **Save As** di `QueryEditor.tsx` dan `MongoQueryEditor.tsx`.
-  - [ ] Tambahkan kategori **`Queries`** di bawah setiap database pada `ObjectExplorer.tsx`, hubungkan ke `ObjectsBrowser.tsx` (`category: "query"`), serta lengkapi menu klik kanan **Open / Rename / Duplicate / Delete**.
+- [x] **Navicat Shortcuts & Bug Fixes:**
+  - [x] Perbaiki *stale closure* pada handler shortcut Monaco di `src/components/QueryEditor.tsx` menggunakan ref terkini.
+  - [x] Terapkan standar shortcut penuh di `QueryEditor.tsx` & `MongoQueryEditor.tsx`: `Ctrl+R` / `Ctrl+Enter` (Run / Run Selected), `Ctrl+Shift+R` (Run Selected), `Ctrl+S` (Save), `Ctrl+Shift+F` (Beautify), `Esc` / `Ctrl+.` (Stop Query).
+  - [x] Batasi scope shortcut `Ctrl+R` di `src/components/ObjectsBrowser.tsx` agar hanya aktif ketika tab `objects` yang sedang fokus.
+- [x] **Dynamic Run Button:**
+  - [x] Track seleksi editor secara real-time (`onDidChangeCursorSelection` & `onDidChangeModelContent`) di `QueryEditor.tsx`.
+  - [x] Ubah label tombol secara dinamis antara **`Run Query`** (tanpa blok teks) dan **`Run Selected Query`** (saat ada teks diblok) beserta tooltip shortcut yang sesuai.
+- [x] **Navicat-Style Local Saved Queries:**
+  - [x] Perluas model `SavedQuery` & storage di `crates/dba-core/src/storage/workspace.rs` untuk menyimpan query terstruktur per `<connection_id>/<database>/` sekaligus tetap membaca file legacy di root `workspace/queries/`.
+  - [x] Tambah Tauri commands `rename_saved_query` dan `duplicate_saved_query` serta perluas `save_query_file` untuk overwrite & binding metadata koneksi/database (`.sql` dan `.mongodb.json`).
+  - [x] Buat komponen **Save Query Modal** (gantikan `window.prompt`), dukung alur Navicat: First Save → Modal, `Ctrl+S` berikutnya → overwrite langsung + toast, serta tombol **Save As** di `QueryEditor.tsx` dan `MongoQueryEditor.tsx`.
+  - [x] Tambahkan kategori **`Queries`** di bawah setiap database pada `ObjectExplorer.tsx`, hubungkan ke `ObjectsBrowser.tsx` (`category: "query"`), serta lengkapi menu klik kanan **Open / Rename / Duplicate / Delete**.
 
 **Kriteria Selesai (Acceptance Criteria) Phase 3:**
 - Memblok sebagian query di `QueryEditor` langsung mengubah tombol menjadi **`Run Selected Query`**; melepas blok mengembalikannya ke **`Run Query`**.
@@ -508,19 +508,19 @@ Menggunakan pendekatan bertahap **Infra & Navigation Polish → Table Data Viewe
 
 ---
 
-### Phase 4 — Dialect-Aware & Schema-Aware SQL Autocomplete Engine ⏳ Belum
+### Phase 4 — Dialect-Aware & Schema-Aware SQL Autocomplete Engine ✅ Selesai
 *Target: Saran pengetikan SQL instan, akurat sesuai dialek engine, dan pintar memahami tabel, kolom, serta alias.*
 
-- [ ] **Arsitektur Completion Provider Terpusat:**
-  - [ ] Buat modul `src/lib/sqlAutocomplete.ts` dengan singleton Monaco `CompletionItemProvider` dan registry konteks per `model.uri` (menghilangkan duplikasi antar tab).
-- [ ] **Kamus Dialek SQL Lengkap:**
-  - [ ] Definisikan daftar keyword, klausa, tipe data, fungsi bawaan, dan snippet ringan untuk **MySQL/MariaDB**, **PostgreSQL**, dan **SQL Server (MSSQL)**.
-- [ ] **Context-Aware & Alias Dot-Completion:**
-  - [ ] Implementasikan deteksi konteks klausa (`FROM`/`JOIN`/`INTO`/`UPDATE` → prioritaskan tabel & view; `SELECT`/`WHERE`/`ON`/`GROUP BY`/`ORDER BY`/`SET` → prioritaskan kolom, fungsi, keyword).
-  - [ ] Implementasikan parser ringan ekstraktor `table` + `alias` agar mengetik `users.` atau `u.` memunculkan daftar kolom spesifik milik tabel `users`.
-- [ ] **Sinkronisasi Schema Cache Andal:**
-  - [ ] Pastikan `getAutocompleteSchema` di `mysql.rs`, `postgres.rs`, dan `mssql.rs` mencakup tables + views serta cepat di-refresh saat user ganti koneksi/database atau menjalankan perintah DDL (`CREATE`/`ALTER`/`DROP`).
-  - [ ] Tambahkan tombol/aksi *Refresh Autocomplete Schema* pada toolbar `QueryEditor.tsx` bila user mengubah skema dari luar aplikasi.
+- [x] **Arsitektur Completion Provider Terpusat:**
+  - [x] Buat modul `src/lib/sqlAutocomplete.ts` dengan singleton Monaco `CompletionItemProvider` dan registry konteks per `model.uri` (menghilangkan duplikasi antar tab).
+- [x] **Kamus Dialek SQL Lengkap:**
+  - [x] Definisikan daftar keyword, klausa, tipe data, fungsi bawaan, dan snippet ringan untuk **MySQL/MariaDB**, **PostgreSQL**, dan **SQL Server (MSSQL)**.
+- [x] **Context-Aware & Alias Dot-Completion:**
+  - [x] Implementasikan deteksi konteks klausa (`FROM`/`JOIN`/`INTO`/`UPDATE` → prioritaskan tabel & view; `SELECT`/`WHERE`/`ON`/`GROUP BY`/`ORDER BY`/`SET` → prioritaskan kolom, fungsi, keyword).
+  - [x] Implementasikan parser ringan ekstraktor `table` + `alias` agar mengetik `users.` atau `u.` memunculkan daftar kolom spesifik milik tabel `users`.
+- [x] **Sinkronisasi Schema Cache Andal:**
+  - [x] Pastikan `getAutocompleteSchema` di `mysql.rs`, `postgres.rs`, dan `mssql.rs` mencakup tables + views serta cepat di-refresh saat user ganti koneksi/database atau menjalankan perintah DDL (`CREATE`/`ALTER`/`DROP`).
+  - [x] Tambahkan tombol/aksi *Refresh Autocomplete Schema* pada toolbar `QueryEditor.tsx` bila user mengubah skema dari luar aplikasi.
 
 **Kriteria Selesai (Acceptance Criteria) Phase 4:**
 - Mengetik `sel` di koneksi MySQL langsung memunculkan `SELECT` teratas; mengetik `cre` memunculkan `CREATE`; mengetik `us` memunculkan tabel `users` (bila ada di database aktif).

@@ -1,18 +1,27 @@
-import React, { useState } from "react";
-import Editor from "@monaco-editor/react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Editor, { type OnMount } from "@monaco-editor/react";
 import {
   Activity,
   AlertTriangle,
+  AlignLeft,
   ArrowDown,
   ArrowUp,
   Braces,
   Layers,
   Play,
   Plus,
+  Save,
+  SaveAll,
   Trash2,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
+import {
+  formatSavedQueryFilename,
+  parseMongoSavedQueryPayload,
+  type MongoSavedQueryPayload,
+} from "../lib/savedQueries";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
+import { SaveQueryModal } from "./SaveQueryModal";
 import type {
   ExplainPlanResult,
   MongoAggregationStage,
@@ -53,44 +62,63 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     connections,
     databasesByConn,
     objectsByKey,
+    savedQueries,
+    activeTabId,
+    updateTab,
     openSafetyModal,
     addLog,
     refreshHistory,
+    refreshSavedQueries,
     theme,
     uiFontSize,
   } = useWorkbenchStore();
 
+  const initialSaved = useMemo(() => parseMongoSavedQueryPayload(tab.sql), [tab.sql]);
+
   const mongoConns = connections.filter((c) => c.engine === "mongodb");
   const [connId, setConnId] = useState(tab.connectionId ?? mongoConns[0]?.id ?? "");
   const [database, setDatabase] = useState(tab.database ?? "");
-  const [collection, setCollection] = useState(tab.collection ?? "");
-  const [mode, setMode] = useState<"mql" | "pipeline">(tab.mongoMode ?? "mql");
+  const [collection, setCollection] = useState(
+    initialSaved?.collection ?? tab.collection ?? ""
+  );
+  const [mode, setMode] = useState<"mql" | "pipeline">(
+    initialSaved?.mode ?? tab.mongoMode ?? "mql"
+  );
 
   // MQL mode state
-  const [operation, setOperation] = useState<MongoQueryRequest["operation"]>("find");
-  const [payloadJson, setPayloadJson] = useState("{\n  \n}");
-  const [updateJson, setUpdateJson] = useState('{\n  "$set": {}\n}');
-  const [limit, setLimit] = useState(100);
+  const [operation, setOperation] = useState<MongoQueryRequest["operation"]>(
+    initialSaved?.operation ?? "find"
+  );
+  const [payloadJson, setPayloadJson] = useState(initialSaved?.payloadJson ?? "{\n  \n}");
+  const [updateJson, setUpdateJson] = useState(
+    initialSaved?.updateJson ?? '{\n  "$set": {}\n}'
+  );
+  const [limit, setLimit] = useState(initialSaved?.limit ?? 100);
   const [mqlResult, setMqlResult] = useState<MongoQueryResponse | null>(null);
   const [explainResult, setExplainResult] = useState<ExplainPlanResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveModalMode, setSaveModalMode] = useState<"save" | "save_as" | null>(null);
 
   // Stage-by-Stage Aggregation Pipeline Builder state
-  const [stages, setStages] = useState<MongoAggregationStage[]>([
-    {
-      id: "st-1",
-      operator: "$match",
-      bodyJson: "{\n  \n}",
-      enabled: true,
-    },
-    {
-      id: "st-2",
-      operator: "$limit",
-      bodyJson: "20",
-      enabled: true,
-    },
-  ]);
+  const [stages, setStages] = useState<MongoAggregationStage[]>(
+    initialSaved?.stages?.length
+      ? initialSaved.stages
+      : [
+          {
+            id: "st-1",
+            operator: "$match",
+            bodyJson: "{\n  \n}",
+            enabled: true,
+          },
+          {
+            id: "st-2",
+            operator: "$limit",
+            bodyJson: "20",
+            enabled: true,
+          },
+        ]
+  );
   const [stageResults, setStageResults] = useState<MongoAggregationStageResult[]>([]);
   const [selectedStageIdx, setSelectedStageIdx] = useState<number>(0);
 
@@ -100,6 +128,34 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const collections = (objectsByKey[`${connId}::${effectiveDb}::${effectiveDb}`] ?? []).filter(
     (o) => o.kind === "collection" || o.kind === "view"
   );
+
+  const existingNamesInTarget = useMemo(() => {
+    return savedQueries
+      .filter(
+        (sq) =>
+          (sq.connectionId ?? "") === (connId || "") &&
+          (sq.database ?? "") === (effectiveDb || "")
+      )
+      .map((sq) => sq.name);
+  }, [savedQueries, connId, effectiveDb]);
+
+  const serializeMongoState = useCallback((): string => {
+    const payload: MongoSavedQueryPayload = {
+      version: 1,
+      mode,
+      collection,
+      operation,
+      payloadJson,
+      updateJson,
+      limit,
+      stages,
+    };
+    return JSON.stringify(payload, null, 2);
+  }, [mode, collection, operation, payloadJson, updateJson, limit, stages]);
+
+  const markDirty = useCallback(() => {
+    if (!tab.dirty) updateTab(tab.id, { dirty: true });
+  }, [tab.dirty, tab.id, updateTab]);
 
   const executeMql = async (confirmedSafety = false) => {
     if (!connId || !collection) {
@@ -202,6 +258,170 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     });
   };
 
+  const handleFormatJson = useCallback(() => {
+    try {
+      if (mode === "mql") {
+        const prettyPayload = JSON.stringify(JSON.parse(payloadJson), null, 2);
+        setPayloadJson(prettyPayload);
+        if (operation === "updateMany") {
+          const prettyUpdate = JSON.stringify(JSON.parse(updateJson), null, 2);
+          setUpdateJson(prettyUpdate);
+        }
+        markDirty();
+      } else {
+        setStages((prev) =>
+          prev.map((st, idx) => {
+            if (idx !== selectedStageIdx) return st;
+            try {
+              return { ...st, bodyJson: JSON.stringify(JSON.parse(st.bodyJson), null, 2) };
+            } catch {
+              return st;
+            }
+          })
+        );
+        markDirty();
+      }
+    } catch (err) {
+      addLog("warn", `JSON format skipped: ${String(err)}`);
+    }
+  }, [mode, payloadJson, updateJson, operation, selectedStageIdx, markDirty, addLog]);
+
+  const handleSaveQuery = useCallback(async () => {
+    const serialized = serializeMongoState();
+    if (tab.savedQueryPath) {
+      try {
+        const saved = await api.saveQueryFile("", tab.title, serialized, {
+          connectionId: connId || null,
+          database: effectiveDb || null,
+          engine: "mongodb",
+          overwritePath: tab.savedQueryPath,
+        });
+        const filename = formatSavedQueryFilename(saved);
+        updateTab(tab.id, {
+          title: filename,
+          sql: serialized,
+          savedQueryPath: saved.path,
+          dirty: false,
+        });
+        await refreshSavedQueries();
+        addLog("success", `Saved ${filename}`, undefined, true);
+      } catch (err) {
+        addLog("error", formatApiError(err));
+      }
+      return;
+    }
+    setSaveModalMode("save");
+  }, [
+    serializeMongoState,
+    tab.savedQueryPath,
+    tab.title,
+    tab.id,
+    connId,
+    effectiveDb,
+    updateTab,
+    refreshSavedQueries,
+    addLog,
+  ]);
+
+  const handleModalSaveSubmit = useCallback(
+    async (cleanName: string) => {
+      const serialized = serializeMongoState();
+      const saved = await api.saveQueryFile("", cleanName, serialized, {
+        connectionId: connId || null,
+        database: effectiveDb || null,
+        engine: "mongodb",
+      });
+      const filename = formatSavedQueryFilename(saved);
+      updateTab(tab.id, {
+        title: filename,
+        sql: serialized,
+        connectionId: connId || undefined,
+        database: effectiveDb || undefined,
+        collection: collection || undefined,
+        mongoMode: mode,
+        savedQueryPath: saved.path,
+        dirty: false,
+      });
+      await refreshSavedQueries();
+      addLog("success", `Saved ${filename}`, undefined, true);
+    },
+    [
+      serializeMongoState,
+      connId,
+      effectiveDb,
+      collection,
+      mode,
+      tab.id,
+      updateTab,
+      refreshSavedQueries,
+      addLog,
+    ]
+  );
+
+  const handleRunActive = useCallback(() => {
+    if (running) return;
+    if (mode === "mql") {
+      executeMql(false);
+    } else {
+      runPipelinePreview();
+    }
+  }, [running, mode, executeMql, runPipelinePreview]);
+
+  const actionsRef = useRef({
+    handleRunActive,
+    handleSaveQuery,
+    handleFormatJson,
+  });
+  actionsRef.current = {
+    handleRunActive,
+    handleSaveQuery,
+    handleFormatJson,
+  };
+
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (saveModalMode) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".monaco-editor")) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && (e.key.toLowerCase() === "r" || e.key === "Enter")) {
+        e.preventDefault();
+        actionsRef.current.handleRunActive();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        actionsRef.current.handleSaveQuery();
+        return;
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        actionsRef.current.handleFormatJson();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeTabId, tab.id, saveModalMode]);
+
+  const handleMonacoMount: OnMount = (editor, monaco) => {
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      actionsRef.current.handleRunActive();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
+      actionsRef.current.handleRunActive();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      actionsRef.current.handleSaveQuery();
+    });
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+      () => {
+        actionsRef.current.handleFormatJson();
+      }
+    );
+  };
+
   const activeStageRes = stageResults.find((r) => r.stageIndex === selectedStageIdx);
 
   return (
@@ -256,9 +476,10 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               <button
                 onClick={() => executeMql(false)}
                 disabled={running}
+                title="Run MQL Query (Ctrl+R / Ctrl+Enter)"
                 className="h-7 px-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
               >
-                <Play className="w-3.5 h-3.5 fill-current" /> Run
+                <Play className="w-3.5 h-3.5 fill-current" /> Run Query
               </button>
               <button
                 onClick={handleExplain}
@@ -272,11 +493,34 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             <button
               onClick={runPipelinePreview}
               disabled={running}
+              title="Run Stage-by-Stage Preview (Ctrl+R / Ctrl+Enter)"
               className="h-7 px-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center gap-1.5"
             >
               <Play className="w-3.5 h-3.5 fill-current" /> Run Stage-by-Stage Preview
             </button>
           )}
+
+          <button
+            onClick={handleFormatJson}
+            title="Format JSON (Ctrl+Shift+F)"
+            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+          >
+            <AlignLeft className="w-3.5 h-3.5" /> Format
+          </button>
+          <button
+            onClick={handleSaveQuery}
+            title={tab.savedQueryPath ? "Save Query (Ctrl+S)" : "Save Query to Workspace (Ctrl+S)"}
+            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+          >
+            <Save className="w-3.5 h-3.5" /> Save
+          </button>
+          <button
+            onClick={() => setSaveModalMode("save_as")}
+            title="Save a Copy As..."
+            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+          >
+            <SaveAll className="w-3.5 h-3.5" /> Save As
+          </button>
         </div>
 
         {/* Target Connection / DB / Collection */}
@@ -358,7 +602,11 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   defaultLanguage="json"
                   theme={theme === "light" ? "light" : "vs-dark"}
                   value={payloadJson}
-                  onChange={(v) => setPayloadJson(v ?? "")}
+                  onChange={(v) => {
+                    setPayloadJson(v ?? "");
+                    markDirty();
+                  }}
+                  onMount={handleMonacoMount}
                   options={{
                     minimap: { enabled: false },
                     fontSize: Math.max(13, Math.round(uiFontSize * 0.85)),
@@ -380,7 +628,11 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     defaultLanguage="json"
                     theme={theme === "light" ? "light" : "vs-dark"}
                     value={updateJson}
-                    onChange={(v) => setUpdateJson(v ?? "")}
+                    onChange={(v) => {
+                      setUpdateJson(v ?? "");
+                      markDirty();
+                    }}
+                    onMount={handleMonacoMount}
                     options={{
                       minimap: { enabled: false },
                       fontSize: Math.max(13, Math.round(uiFontSize * 0.85)),
@@ -594,6 +846,27 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           </div>
         </div>
       )}
+
+      <SaveQueryModal
+        open={saveModalMode !== null}
+        mode={saveModalMode ?? "save"}
+        initialName={
+          saveModalMode === "save_as"
+            ? `${tab.title.replace(/\.mongodb\.json$/i, "")}_copy`
+            : tab.savedQueryPath
+            ? tab.title.replace(/\.mongodb\.json$/i, "")
+            : collection
+            ? `${collection}_${mode}`
+            : ""
+        }
+        extension=".mongodb.json"
+        connectionName={selectedConn?.name ?? null}
+        databaseName={effectiveDb || null}
+        existingNames={existingNamesInTarget}
+        allowOverwrite={true}
+        onClose={() => setSaveModalMode(null)}
+        onSubmit={handleModalSaveSubmit}
+      />
     </div>
   );
 };

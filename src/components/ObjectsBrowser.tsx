@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Braces,
   ClipboardPaste,
   Copy,
   Database,
+  Edit3,
   Eye,
   FileCode2,
   FolderOpen,
@@ -17,23 +19,33 @@ import {
   Wrench,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
+import {
+  buildTabFromSavedQuery,
+  formatSavedQueryFilename,
+  isMongoSavedQuery,
+} from "../lib/savedQueries";
 import { useWorkbenchStore } from "../store/useWorkbenchStore";
-import type { DatabaseObject } from "../types/dba";
+import { SaveQueryModal } from "./SaveQueryModal";
+import type { DatabaseObject, SavedQuery } from "../types/dba";
 
 export const ObjectsBrowser: React.FC = () => {
   const {
     connections,
     connectedIds,
+    activeTabId,
+    tabs,
     browserContext,
     objectsByKey,
     savedQueries,
     connectTo,
     loadObjects,
     openTab,
+    updateTab,
     openConnectionModal,
     openSafetyModal,
     setInspectedTableMeta,
     addLog,
+    refreshSavedQueries,
     copiedObject,
     setCopiedObject,
     pasteCopiedObject,
@@ -42,9 +54,38 @@ export const ObjectsBrowser: React.FC = () => {
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [search, setSearch] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedQueryPath, setSelectedQueryPath] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pasting, setPasting] = useState(false);
+  const [queryCtxMenu, setQueryCtxMenu] = useState<{
+    x: number;
+    y: number;
+    query: SavedQuery;
+  } | null>(null);
+  const [queryModal, setQueryModal] = useState<{
+    mode: "rename" | "duplicate";
+    query: SavedQuery;
+  } | null>(null);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const queryCtxMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!queryCtxMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (queryCtxMenuRef.current && !queryCtxMenuRef.current.contains(e.target as Node)) {
+        setQueryCtxMenu(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setQueryCtxMenu(null);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [queryCtxMenu]);
 
   const conn = connections.find((c) => c.id === browserContext.connectionId);
   const objKey =
@@ -79,6 +120,77 @@ export const ObjectsBrowser: React.FC = () => {
   }, [objKey, objectsByKey, browserContext.category, search]);
 
   const selectedObj = objects.find((o) => o.name === selectedName) ?? null;
+
+  const dbSavedQueries = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return savedQueries.filter((sq) => {
+      if (browserContext.connectionId && browserContext.database) {
+        if (
+          sq.connectionId !== browserContext.connectionId ||
+          sq.database !== browserContext.database
+        ) {
+          return false;
+        }
+      }
+      if (q && !sq.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [savedQueries, browserContext.connectionId, browserContext.database, search]);
+
+  const selectedSavedQuery =
+    dbSavedQueries.find((sq) => sq.path === selectedQueryPath) ?? null;
+
+  const handleOpenSavedQuery = (sq: SavedQuery) => {
+    openTab(
+      buildTabFromSavedQuery(sq, {
+        connectionId: conn?.id,
+        database: browserContext.database,
+        schema: browserContext.schema,
+      })
+    );
+  };
+
+  const handleDeleteSavedQuery = (sq: SavedQuery) => {
+    const filename = formatSavedQueryFilename(sq);
+    openSafetyModal({
+      title: `Delete Saved Query "${filename}"`,
+      warnings: [`This will permanently delete "${filename}" from your local workspace.`],
+      sqlPreview: sq.path,
+      onConfirm: async () => {
+        try {
+          await api.deleteSavedQuery(sq.path);
+          await refreshSavedQueries();
+          if (selectedQueryPath === sq.path) setSelectedQueryPath(null);
+          addLog("warn", `Deleted saved query "${filename}"`, undefined, true);
+        } catch (err) {
+          addLog("error", formatApiError(err));
+        }
+      },
+    });
+  };
+
+  const handleSavedQueryModalSubmit = async (cleanName: string) => {
+    if (!queryModal) return;
+    if (queryModal.mode === "rename") {
+      const renamed = await api.renameSavedQuery(queryModal.query.path, cleanName);
+      const filename = formatSavedQueryFilename(renamed);
+      // Sync any open tab referencing the old path
+      for (const t of tabs) {
+        if (t.savedQueryPath === queryModal.query.path) {
+          updateTab(t.id, { title: filename, savedQueryPath: renamed.path });
+        }
+      }
+      await refreshSavedQueries();
+      setSelectedQueryPath(renamed.path);
+      addLog("success", `Renamed query to ${filename}`, undefined, true);
+    } else {
+      const dup = await api.duplicateSavedQuery(queryModal.query.path, cleanName);
+      const filename = formatSavedQueryFilename(dup);
+      await refreshSavedQueries();
+      setSelectedQueryPath(dup.path);
+      addLog("success", `Duplicated query as ${filename}`, undefined, true);
+    }
+  };
 
   const handleSelectObject = async (obj: DatabaseObject) => {
     setSelectedName(obj.name);
@@ -293,7 +405,10 @@ export const ObjectsBrowser: React.FC = () => {
   };
 
   useEffect(() => {
+    // Only capture ObjectsBrowser shortcuts (F5, Ctrl+R, Ctrl+C/V, arrows) when Objects tab is active
+    if (activeTabId !== "objects") return;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (queryModal) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -309,7 +424,11 @@ export const ObjectsBrowser: React.FC = () => {
         browserContext.database
       ) {
         e.preventDefault();
-        handleRefresh();
+        if (browserContext.category === "query") {
+          refreshSavedQueries();
+        } else {
+          handleRefresh();
+        }
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedObj) {
@@ -373,6 +492,8 @@ export const ObjectsBrowser: React.FC = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    activeTabId,
+    queryModal,
     objects,
     selectedName,
     selectedObj,
@@ -600,31 +721,127 @@ export const ObjectsBrowser: React.FC = () => {
 
       <div ref={listContainerRef} tabIndex={0} className="flex-1 overflow-auto outline-none">
         {browserContext.category === "query" ? (
-          <div className="p-3 space-y-1">
-            {savedQueries.map((sq) => (
-              <div
-                key={sq.id}
-                onDoubleClick={() =>
-                  openTab({
-                    kind: "query",
-                    title: `${sq.name}.sql`,
-                    connectionId: conn.id,
-                    database: browserContext.database ?? undefined,
-                    sql: sq.sql,
-                  })
-                }
-                className="px-3 py-2 rounded hover:bg-sky-500/15 flex items-center justify-between cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <FileCode2 className="w-4 h-4 text-indigo-400" />
-                  <span className="font-medium">{sq.name}.sql</span>
-                </div>
-                <span className="text-[0.72rem] text-zinc-500 font-mono">
-                  {new Date(sq.updatedAt).toLocaleString()}
-                </span>
+          dbSavedQueries.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-2 p-6 text-center">
+              <FileCode2 className="w-8 h-8 text-indigo-400/60" />
+              <div>
+                No saved queries for{" "}
+                <strong className="text-zinc-700 dark:text-zinc-300">
+                  {conn.name} / {browserContext.database}
+                </strong>
               </div>
-            ))}
-          </div>
+              <button
+                onClick={() =>
+                  conn.engine === "mongodb"
+                    ? openTab({
+                        kind: "mongo_query",
+                        title: `MQL — ${conn.name}`,
+                        connectionId: conn.id,
+                        database: browserContext.database ?? undefined,
+                        mongoMode: "mql",
+                      })
+                    : openTab({
+                        kind: "query",
+                        title: `Query — ${conn.name}`,
+                        connectionId: conn.id,
+                        database: browserContext.database ?? undefined,
+                        schema: browserContext.schema ?? undefined,
+                        sql: "",
+                      })
+                }
+                className="mt-1 h-7 px-3 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> New Query
+              </button>
+            </div>
+          ) : (
+            <div className="p-2 space-y-0.5">
+              {dbSavedQueries.map((sq) => {
+                const filename = formatSavedQueryFilename(sq);
+                const isMongo = isMongoSavedQuery(sq);
+                const isSel = selectedQueryPath === sq.path;
+                return (
+                  <div
+                    key={sq.id}
+                    onClick={() => setSelectedQueryPath(sq.path)}
+                    onDoubleClick={() => handleOpenSavedQuery(sq)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setSelectedQueryPath(sq.path);
+                      const x = Math.min(e.clientX, window.innerWidth - 190);
+                      const y = Math.min(e.clientY, window.innerHeight - 160);
+                      setQueryCtxMenu({ x: Math.max(8, x), y: Math.max(8, y), query: sq });
+                    }}
+                    className={`group px-3 py-2 rounded flex items-center justify-between gap-2 cursor-pointer select-none ${
+                      isSel
+                        ? "bg-sky-600/25 text-zinc-900 dark:text-white"
+                        : "hover:bg-sky-500/15"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isMongo ? (
+                        <Braces className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <FileCode2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                      )}
+                      <span className="font-medium truncate">{filename}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[0.72rem] text-zinc-500 font-mono">
+                        {new Date(sq.updatedAt).toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          title="Open Query"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenSavedQuery(sq);
+                          }}
+                          className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-sky-400"
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Rename"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setQueryModal({ mode: "rename", query: sq });
+                          }}
+                          className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Duplicate"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setQueryModal({ mode: "duplicate", query: sq });
+                          }}
+                          className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-teal-400"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSavedQuery(sq);
+                          }}
+                          className="p-1 rounded hover:bg-red-500/15 text-red-400"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
         ) : objects.length === 0 ? (
           <div className="h-full flex items-center justify-center text-zinc-500">
             No {browserContext.category} objects found in {browserContext.database}
@@ -725,13 +942,89 @@ export const ObjectsBrowser: React.FC = () => {
 
       <div className="px-3 py-1 border-t border-zinc-200 dark:border-[#32343a] bg-zinc-50 dark:bg-[#25262a] text-[0.75rem] text-zinc-500 flex items-center justify-between">
         <span>
-          {objects.length} {browserContext.category}(s) in {browserContext.database}
-          {browserContext.schema && browserContext.schema !== browserContext.database
-            ? `.${browserContext.schema}`
-            : ""}
+          {browserContext.category === "query"
+            ? `${dbSavedQueries.length} saved quer${dbSavedQueries.length === 1 ? "y" : "ies"} in ${browserContext.database}`
+            : `${objects.length} ${browserContext.category}(s) in ${browserContext.database}${
+                browserContext.schema && browserContext.schema !== browserContext.database
+                  ? `.${browserContext.schema}`
+                  : ""
+              }`}
         </span>
-        <span>Double-click to open • Single-click to inspect</span>
+        <span>
+          {browserContext.category === "query"
+            ? selectedSavedQuery
+              ? `Selected: ${formatSavedQueryFilename(selectedSavedQuery)} • Double-click to open • Right-click for actions`
+              : "Double-click to open • Right-click to rename, duplicate, or delete"
+            : "Double-click to open • Single-click to inspect"}
+        </span>
       </div>
+
+      {queryCtxMenu && (
+        <div
+          ref={queryCtxMenuRef}
+          style={{ top: queryCtxMenu.y, left: queryCtxMenu.x }}
+          className="fixed z-50 w-44 py-1 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs"
+        >
+          <button
+            onClick={() => {
+              handleOpenSavedQuery(queryCtxMenu.query);
+              setQueryCtxMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-sky-400" /> Open Query
+          </button>
+          <button
+            onClick={() => {
+              setQueryModal({ mode: "rename", query: queryCtxMenu.query });
+              setQueryCtxMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <Edit3 className="w-3.5 h-3.5" /> Rename
+          </button>
+          <button
+            onClick={() => {
+              setQueryModal({ mode: "duplicate", query: queryCtxMenu.query });
+              setQueryCtxMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <Copy className="w-3.5 h-3.5 text-teal-400" /> Duplicate
+          </button>
+          <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+          <button
+            onClick={() => {
+              handleDeleteSavedQuery(queryCtxMenu.query);
+              setQueryCtxMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left flex items-center gap-2 text-red-500 hover:bg-red-500/10"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </button>
+        </div>
+      )}
+
+      {queryModal && (
+        <SaveQueryModal
+          open={true}
+          mode={queryModal.mode}
+          initialName={
+            queryModal.mode === "duplicate"
+              ? `${queryModal.query.name}_copy`
+              : queryModal.query.name
+          }
+          extension={isMongoSavedQuery(queryModal.query) ? ".mongodb.json" : ".sql"}
+          connectionName={conn.name}
+          databaseName={browserContext.database}
+          existingNames={dbSavedQueries
+            .filter((sq) => sq.path !== queryModal.query.path)
+            .map((sq) => sq.name)}
+          allowOverwrite={false}
+          onClose={() => setQueryModal(null)}
+          onSubmit={handleSavedQueryModalSubmit}
+        />
+      )}
     </div>
   );
 };

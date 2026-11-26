@@ -395,6 +395,12 @@ pub struct SavedQuery {
     pub id: String,
     pub name: String,
     pub folder: String,
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
     pub engine: Option<DbEngine>,
     pub sql: String,
     pub path: String,
