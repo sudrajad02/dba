@@ -135,6 +135,7 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     openTab,
     openSafetyModal,
     addLog,
+    updateTab,
   } = useWorkbenchStore();
 
   const sqlConns = connections.filter((c) => c.engine !== "mongodb");
@@ -166,6 +167,23 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const panRef = useRef({ x: 0, y: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cleanModelSigRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const sig = JSON.stringify({
+      name: model.name,
+      tables: model.tables,
+      relationships: model.relationships,
+    });
+    if (cleanModelSigRef.current === null) {
+      cleanModelSigRef.current = sig;
+      return;
+    }
+    const isDirty = sig !== cleanModelSigRef.current;
+    if (Boolean(tab.dirty) !== isDirty) {
+      updateTab(tab.id, { dirty: isDirty });
+    }
+  }, [model.name, model.tables, model.relationships, tab.dirty, tab.id, updateTab]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -380,7 +398,13 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const handleSaveModel = async () => {
     try {
       const saved = await api.saveErModel(model);
+      cleanModelSigRef.current = JSON.stringify({
+        name: saved.name,
+        tables: saved.tables,
+        relationships: saved.relationships,
+      });
       setModel(saved);
+      updateTab(tab.id, { dirty: false });
       await refreshSavedModels();
       addLog("success", `Saved ER Model "${saved.name}" to workspace/models/.`);
     } catch (e) {
@@ -1414,7 +1438,7 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 </button>
               </div>
             </div>
-            <pre className="flex-1 overflow-auto p-4 font-mono text-xs bg-zinc-950 text-emerald-300 whitespace-pre-wrap">
+            <pre className="flex-1 overflow-auto p-4 font-mono text-xs bg-[#1e1f22] text-emerald-300 whitespace-pre-wrap">
               {ddlPreview || "-- No tables in model."}
             </pre>
           </div>
@@ -1462,7 +1486,7 @@ export const ErDiagramDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 </button>
               </div>
             </div>
-            <pre className="flex-1 overflow-auto p-4 font-mono text-xs bg-zinc-950 text-amber-300 whitespace-pre-wrap">
+            <pre className="flex-1 overflow-auto p-4 font-mono text-xs bg-[#1e1f22] text-amber-300 whitespace-pre-wrap">
               {syncPlan.fullScript || "-- Target database already matches this ER model."}
             </pre>
           </div>

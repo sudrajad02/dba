@@ -329,7 +329,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   setSrcConnId(e.target.value);
                   initConnection(e.target.value, true);
                 }}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
               >
                 <option value="">Connection...</option>
                 {connections.map((c) => (
@@ -344,7 +344,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   setSrcDb(e.target.value);
                   loadObjects(srcConnId, e.target.value, e.target.value);
                 }}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
               >
                 {srcDbs.length === 0 && <option value={effSrcDb}>{effSrcDb || "db"}</option>}
                 {srcDbs.map((d) => (
@@ -359,7 +359,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   setSrcSchema(e.target.value);
                   loadObjects(srcConnId, effSrcDb, e.target.value);
                 }}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
               >
                 {srcSchemas.length === 0 && <option value={effSrcSchema}>{effSrcSchema || "—"}</option>}
                 {srcSchemas.map((s) => (
@@ -384,7 +384,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   setTgtConnId(e.target.value);
                   initConnection(e.target.value, false);
                 }}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
               >
                 <option value="">Connection...</option>
                 {connections.map((c) => (
@@ -396,7 +396,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
               <select
                 value={effTgtDb}
                 onChange={(e) => setTgtDb(e.target.value)}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
               >
                 {tgtDbs.length === 0 && <option value={effTgtDb}>{effTgtDb || "db"}</option>}
                 {tgtDbs.map((d) => (
@@ -408,7 +408,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
               <select
                 value={effTgtSchema}
                 onChange={(e) => setTgtSchema(e.target.value)}
-                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
               >
                 {tgtSchemas.length === 0 && <option value={effTgtSchema}>{effTgtSchema || "—"}</option>}
                 {tgtSchemas.map((s) => (
@@ -454,7 +454,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 </button>
               </div>
             </div>
-            <div className="max-h-64 overflow-auto space-y-1.5 p-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-200 dark:border-zinc-800">
+            <div className="max-h-64 overflow-auto space-y-1.5 p-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-subtle)]">
               {totalAvailableCount === 0 ? (
                 <div className="py-8 text-center text-zinc-500">
                   Select a connected source database to list objects.
@@ -540,7 +540,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                             return (
                               <label
                                 key={key}
-                                className={`flex items-center justify-between px-2 py-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 font-mono ${
+                                className={`flex items-center justify-between px-2 py-0.5 rounded hover:bg-[var(--surface-hover)] font-mono ${
                                   disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
                                 }`}
                               >
@@ -598,7 +598,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 <select
                   value={mode}
                   onChange={(e) => setMode(e.target.value as TransferTableMode)}
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                 >
                   <option value="create_if_not_exists">Create if Missing & Insert</option>
                   <option value="drop_and_recreate">Drop & Recreate Target</option>
@@ -613,7 +613,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     type="number"
                     value={batchSize}
                     onChange={(e) => setBatchSize(Number(e.target.value) || 250)}
-                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
                 <div>
@@ -621,7 +621,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   <select
                     value={errorPolicy}
                     onChange={(e) => setErrorPolicy(e.target.value as ImportErrorPolicy)}
-                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                   >
                     <option value="stop_on_error">Stop</option>
                     <option value="skip_and_log">Skip Object</option>
@@ -639,7 +639,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 onClick={() =>
                   setTypeMappings((prev) => [...prev, { sourceType: "", targetType: "" }])
                 }
-                className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 flex items-center gap-1"
+                className="h-6 px-2 rounded border border-[var(--border-strong)] flex items-center gap-1"
               >
                 <Plus className="w-3 h-3" /> Add Rule
               </button>
@@ -655,7 +655,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                       )
                     }
                     placeholder="source type"
-                    className="flex-1 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="flex-1 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                   <span className="text-zinc-500">→</span>
                   <input
@@ -666,7 +666,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                       )
                     }
                     placeholder="target type"
-                    className="flex-1 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono text-teal-400"
+                    className="flex-1 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono text-teal-400"
                   />
                   <button
                     onClick={() => setTypeMappings((prev) => prev.filter((_, i) => i !== idx))}
@@ -687,7 +687,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 value={profileName}
                 onChange={(e) => setProfileName(e.target.value)}
                 placeholder="Profile name..."
-                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
               />
               <button
                 onClick={handleSaveProfile}
@@ -703,7 +703,7 @@ export const DataTransferWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 profiles.map((p) => (
                   <div
                     key={p.id}
-                    className="p-2 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1e1f22] flex items-center justify-between gap-2"
+                    className="p-2 rounded border border-[var(--border-subtle)] bg-white dark:bg-[#1e1f22] flex items-center justify-between gap-2"
                   >
                     <button
                       onClick={() => {

@@ -1094,6 +1094,45 @@ impl SqlDriver for MssqlDriver {
         kind: ObjectKind,
     ) -> Result<()> {
         let sc = self.effective_schema(schema);
+        let mut client = self.open_client(database).await?;
+
+        if matches!(kind, ObjectKind::Index) {
+            let stream = client
+                .query(
+                    "SELECT TOP 1 s.name, o.name
+                     FROM sys.indexes i
+                     JOIN sys.objects o ON i.object_id = o.object_id
+                     JOIN sys.schemas s ON o.schema_id = s.schema_id
+                     WHERE i.name = @P1 AND s.name = @P2",
+                    &[&name, &sc],
+                )
+                .await
+                .map_err(map_mssql_error)?;
+            let row = stream.into_row().await.map_err(map_mssql_error)?;
+            let (owner_schema, owner_table): (String, String) = row
+                .and_then(|r| {
+                    let s = r.get::<&str, _>(0)?.to_string();
+                    let t = r.get::<&str, _>(1)?.to_string();
+                    Some((s, t))
+                })
+                .ok_or_else(|| DbaError::Database {
+                    message: format!(
+                        "Could not locate owning table for index [{}] in schema [{}]",
+                        name, sc
+                    ),
+                    code: None,
+                    detail: None,
+                    line: None,
+                })?;
+            let sql = format!(
+                "DROP INDEX {} ON {}",
+                crate::drivers::quote_ident(DbEngine::Mssql, name),
+                qualified_table(DbEngine::Mssql, Some(&owner_schema), &owner_table)
+            );
+            client.execute(sql, &[]).await.map_err(map_mssql_error)?;
+            return Ok(());
+        }
+
         let fq = qualified_table(DbEngine::Mssql, Some(sc), name);
         let kw = match kind {
             ObjectKind::Table => "TABLE",
@@ -1101,11 +1140,59 @@ impl SqlDriver for MssqlDriver {
             ObjectKind::Procedure => "PROCEDURE",
             ObjectKind::Function => "FUNCTION",
             ObjectKind::Trigger => "TRIGGER",
+            ObjectKind::Sequence => "SEQUENCE",
             _ => "TABLE",
         };
-        let mut client = self.open_client(database).await?;
         client
             .execute(format!("DROP {} {}", kw, fq), &[])
+            .await
+            .map_err(map_mssql_error)?;
+        Ok(())
+    }
+
+    async fn rename_table(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let sc = self.effective_schema(schema);
+        let fq_old = qualified_table(DbEngine::Mssql, Some(sc), old_name).replace('\'', "''");
+        let safe_new = new_name.replace('\'', "''");
+        let mut client = self.open_client(database).await?;
+        client
+            .execute(format!("EXEC sp_rename N'{}', N'{}'", fq_old, safe_new), &[])
+            .await
+            .map_err(map_mssql_error)?;
+        Ok(())
+    }
+
+    async fn create_schema(&self, database: Option<&str>, name: &str) -> Result<()> {
+        let mut client = self.open_client(database).await?;
+        client
+            .execute(
+                format!(
+                    "CREATE SCHEMA {}",
+                    crate::drivers::quote_ident(DbEngine::Mssql, name)
+                ),
+                &[],
+            )
+            .await
+            .map_err(map_mssql_error)?;
+        Ok(())
+    }
+
+    async fn drop_schema(&self, database: Option<&str>, name: &str, _cascade: bool) -> Result<()> {
+        let mut client = self.open_client(database).await?;
+        client
+            .execute(
+                format!(
+                    "DROP SCHEMA {}",
+                    crate::drivers::quote_ident(DbEngine::Mssql, name)
+                ),
+                &[],
+            )
             .await
             .map_err(map_mssql_error)?;
         Ok(())

@@ -1034,4 +1034,23 @@ impl SqlDriver for MongoDriver {
         }
         Ok(())
     }
+
+    async fn rename_table(
+        &self,
+        database: Option<&str>,
+        _schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let db_name = self.db_name(database);
+        self.client
+            .database("admin")
+            .run_command(doc! {
+                "renameCollection": format!("{}.{}", db_name, old_name),
+                "to": format!("{}.{}", db_name, new_name),
+            })
+            .await
+            .map_err(map_mongo_error)?;
+        Ok(())
+    }
 }

@@ -89,7 +89,7 @@ const JsonTreeNode: React.FC<{
         </span>
       </button>
       {open && (
-        <div className="border-l border-zinc-200 dark:border-zinc-800 ml-1.5">
+        <div className="border-l border-[var(--border-subtle)] ml-1.5">
           {entries.map(([k, v]) => (
             <JsonTreeNode key={k} label={k} value={v} depth={depth + 1} />
           ))}
@@ -401,14 +401,14 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
       {/* Top Toolbar */}
-      <div className="px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <button
             onClick={fetchDocs}
             title="Refresh Collection"
-            className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+            className="h-7 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -421,7 +421,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   rawJson: "{\n  \"name\": \"\"\n}",
                 })
               }
-              className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+              className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
             >
               <Plus className="w-3.5 h-3.5 text-emerald-400" />
               Insert Doc
@@ -429,14 +429,14 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           )}
 
           {/* View Mode Switcher: Tree / Raw JSON / Flattened Grid */}
-          <div className="flex rounded border border-zinc-300 dark:border-zinc-700 overflow-hidden ml-1">
+          <div className="flex rounded border border-[var(--border-strong)] overflow-hidden ml-1">
             <button
               onClick={() => setViewMode("tree")}
               title="Collapsible BSON/JSON Tree View"
               className={`h-7 px-2 flex items-center gap-1 ${
                 viewMode === "tree"
                   ? "bg-emerald-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <ListTree className="w-3.5 h-3.5" /> Tree
@@ -447,7 +447,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2 flex items-center gap-1 ${
                 viewMode === "json"
                   ? "bg-emerald-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Braces className="w-3.5 h-3.5" /> JSON
@@ -458,7 +458,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2 flex items-center gap-1 ${
                 viewMode === "table"
                   ? "bg-emerald-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Table2 className="w-3.5 h-3.5" /> Table
@@ -476,7 +476,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 mongoMode: "pipeline",
               })
             }
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <Layers className="w-3.5 h-3.5 text-emerald-400" />
             Pipeline
@@ -492,7 +492,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 collection,
               })
             }
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <Wrench className="w-3.5 h-3.5 text-amber-400" />
             Indexes & Validation
@@ -504,7 +504,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2 rounded border flex items-center gap-1 ${
                 instantCommit
                   ? "border-amber-500 bg-amber-500/15 text-amber-400"
-                  : "border-zinc-300 dark:border-zinc-700 text-zinc-500"
+                  : "border-[var(--border-strong)] text-zinc-500"
               }`}
             >
               <Zap className="w-3 h-3" />
@@ -522,7 +522,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               </span>
               <button
                 onClick={() => setPreviewOpsModal(JSON.stringify(buildChanges(), null, 2))}
-                className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+                className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
               >
                 <Code2 className="w-3.5 h-3.5" /> Preview
               </button>
@@ -532,7 +532,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   setStagedUpdates({});
                   setStagedDeletes(new Set());
                 }}
-                className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-400 flex items-center gap-1"
+                className="h-7 px-2 rounded border border-[var(--border-strong)] text-zinc-400 flex items-center gap-1"
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Discard
               </button>
@@ -546,7 +546,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           )}
 
           {/* Navicat-Style Connection & Database Switcher */}
-          <div className="flex items-center gap-1 pl-1.5 border-l border-zinc-300 dark:border-zinc-700">
+          <div className="flex items-center gap-1 pl-1.5 border-l border-[var(--border-strong)]">
             <span
               className={`w-2 h-2 rounded-full shrink-0 ${envDotClass}`}
               title={`Environment: ${conn?.environment ?? "local"}`}
@@ -556,7 +556,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               disabled={switchingDb}
               onChange={(e) => handleSwitchConnection(e.target.value)}
               title="Switch MongoDB Connection"
-              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[150px] truncate"
+              className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] max-w-[150px] truncate"
             >
               {mongoConnections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -569,7 +569,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               disabled={switchingDb || !tab.connectionId}
               onChange={(e) => handleSwitchDatabase(e.target.value)}
               title="Switch MongoDB Database"
-              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[140px] truncate font-mono"
+              className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] max-w-[140px] truncate font-mono"
             >
               {!dbs.some((d) => d.name === database) && database && (
                 <option value={database}>{database}</option>
@@ -585,7 +585,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       </div>
 
       {/* MongoDB Filter & Sort Bar */}
-      <div className="px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/70 dark:bg-zinc-900/40 flex flex-wrap items-center gap-2">
+      <div className="px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--surface-elevated)] flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
           <span className="text-zinc-500 font-mono">Filter:</span>
           <input
@@ -598,7 +598,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               }
             }}
             placeholder='{ "status": "active" }'
-            className="flex-1 h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+            className="flex-1 h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
           />
         </div>
         <div className="flex items-center gap-1.5 w-60">
@@ -613,7 +613,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               }
             }}
             placeholder='{ "_id": -1 }'
-            className="flex-1 h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+            className="flex-1 h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
           />
         </div>
         <button
@@ -644,7 +644,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     title: e.target.value,
                   });
                 }}
-                className="h-6 px-2 rounded bg-zinc-900 border border-zinc-700 text-xs font-mono"
+                className="h-6 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] text-xs font-mono"
               >
                 <option value="">Select collection...</option>
                 {availableCollections.map((c) => (
@@ -685,15 +685,15 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
 
         {viewMode === "table" ? (
           <table className="w-max min-w-full border-collapse text-left">
-            <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
+            <thead className="sticky top-0 bg-[var(--surface-panel)] border-b border-[var(--border-subtle)]">
               <tr>
-                <th className="px-2 py-1.5 text-zinc-500 border-r border-zinc-200 dark:border-zinc-800 w-16">
+                <th className="px-2 py-1.5 text-zinc-500 border-r border-[var(--border-subtle)] w-16">
                   #
                 </th>
                 {flatColumns.map((col) => (
                   <th
                     key={col}
-                    className="px-2.5 py-1.5 font-semibold border-r border-zinc-200 dark:border-zinc-800 whitespace-nowrap font-mono"
+                    className="px-2.5 py-1.5 font-semibold border-r border-[var(--border-subtle)] whitespace-nowrap font-mono"
                   >
                     {col}
                   </th>
@@ -708,15 +708,15 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 return (
                   <tr
                     key={idx}
-                    className={`border-b border-zinc-200/60 dark:border-zinc-800/60 ${
+                    className={`border-b border-[var(--border-subtle)] ${
                       isDeleted
                         ? "bg-red-500/15 line-through text-red-400"
                         : patched
                         ? "bg-amber-500/15"
-                        : "hover:bg-zinc-100/60 dark:hover:bg-zinc-900"
+                        : "hover:bg-[var(--surface-hover)]"
                     }`}
                   >
-                    <td className="px-2 py-1 border-r border-zinc-200 dark:border-zinc-800 font-mono text-zinc-500">
+                    <td className="px-2 py-1 border-r border-[var(--border-subtle)] font-mono text-zinc-500">
                       <div className="flex items-center gap-1">
                         <span>{(page - 1) * pageSize + idx + 1}</span>
                         {!isReadOnly && (
@@ -762,7 +762,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             value: doc[col],
                           })
                         }
-                        className="px-2.5 py-1 border-r border-zinc-200/60 dark:border-zinc-800/60 font-mono max-w-[280px] truncate cursor-pointer"
+                        className="px-2.5 py-1 border-r border-[var(--border-subtle)] font-mono max-w-[280px] truncate cursor-pointer"
                       >
                         {formatFlatCell(doc[col])}
                       </td>
@@ -785,10 +785,10 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     ? "border-red-500/40 bg-red-500/10 opacity-75"
                     : patched
                     ? "border-amber-500/40 bg-amber-500/10"
-                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50"
+                    : "border-[var(--border-subtle)] bg-[var(--surface-panel)]"
                 }`}
               >
-                <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-200/70 dark:border-zinc-800/70">
+                <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-[var(--border-subtle)]">
                   <span className="font-mono text-[0.72rem] text-zinc-500">
                     #{(page - 1) * pageSize + idx + 1} • _id: {formatFlatCell(doc._id)}
                     {patched && <span className="ml-2 text-amber-400">(modified)</span>}
@@ -804,7 +804,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             rawJson: JSON.stringify(doc, null, 2),
                           })
                         }
-                        className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+                        className="h-6 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
                       >
                         <Edit3 className="w-3 h-3" /> Edit
                       </button>
@@ -817,7 +817,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             return next;
                           })
                         }
-                        className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-red-500/15 text-red-400 flex items-center gap-1"
+                        className="h-6 px-2 rounded border border-[var(--border-strong)] hover:bg-red-500/15 text-red-400 flex items-center gap-1"
                       >
                         <Trash2 className="w-3 h-3" /> {isDeleted ? "Undo" : "Delete"}
                       </button>
@@ -844,7 +844,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       </div>
 
       {/* Pagination Footer */}
-      <div className="px-3 py-1.5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 flex items-center justify-between text-zinc-500">
+      <div className="px-3 py-1.5 border-t border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-center justify-between text-zinc-500">
         <span>
           {docs.length} / {totalCount.toLocaleString()} documents • {executionMs}ms
         </span>
@@ -855,7 +855,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               setPageSize(Number(e.target.value));
               setPage(1);
             }}
-            className="h-6 px-1.5 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+            className="h-6 px-1.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
           >
             <option value={25}>25 / page</option>
             <option value={50}>50 / page</option>
@@ -864,7 +864,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-40"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -874,7 +874,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-40"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -888,7 +888,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           onClick={() => setEditorModal(null)}
         >
           <div
-            className="w-full max-w-2xl rounded-md border border-zinc-700 bg-zinc-900 shadow-2xl overflow-hidden flex flex-col"
+            className="w-full max-w-2xl rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between">
@@ -903,7 +903,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               value={editorModal.rawJson}
               onChange={(e) => setEditorModal({ ...editorModal, rawJson: e.target.value })}
               rows={16}
-              className="w-full p-3 bg-zinc-950 text-emerald-300 font-mono text-xs focus:outline-none"
+              className="w-full p-3 bg-[#1e1f22] text-emerald-300 font-mono text-xs focus:outline-none"
             />
             <div className="px-4 py-2.5 border-t border-zinc-800 flex justify-end gap-2">
               <button
@@ -930,7 +930,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           onClick={() => setPreviewOpsModal(null)}
         >
           <div
-            className="w-full max-w-xl rounded-md border border-zinc-700 bg-zinc-900 shadow-2xl overflow-hidden"
+            className="w-full max-w-xl rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between">
@@ -939,7 +939,7 @@ export const MongoViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <X className="w-4 h-4 text-zinc-400" />
               </button>
             </div>
-            <pre className="p-4 text-xs font-mono text-emerald-300 bg-zinc-950 max-h-80 overflow-auto">
+            <pre className="p-4 text-xs font-mono text-emerald-300 bg-[#1e1f22] max-h-80 overflow-auto">
               {previewOpsModal}
             </pre>
           </div>

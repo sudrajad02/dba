@@ -92,6 +92,30 @@ pub trait SqlDriver: Send + Sync {
             "Dropping databases is not supported for this engine".into(),
         ))
     }
+    async fn rename_table(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let _ = (database, schema, old_name, new_name);
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Renaming tables is not supported for this engine".into(),
+        ))
+    }
+    async fn create_schema(&self, database: Option<&str>, name: &str) -> Result<()> {
+        let _ = (database, name);
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Creating schemas is not supported for this engine".into(),
+        ))
+    }
+    async fn drop_schema(&self, database: Option<&str>, name: &str, cascade: bool) -> Result<()> {
+        let _ = (database, name, cascade);
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Dropping schemas is not supported for this engine".into(),
+        ))
+    }
 }
 
 /// Validates a charset/collation/encoding token so it cannot inject SQL.

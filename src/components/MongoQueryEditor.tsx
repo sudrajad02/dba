@@ -121,6 +121,12 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   );
   const [stageResults, setStageResults] = useState<MongoAggregationStageResult[]>([]);
   const [selectedStageIdx, setSelectedStageIdx] = useState<number>(0);
+  const [editorHeightPct, setEditorHeightPct] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("dv_mongo_editor_split_pct"));
+    return Number.isFinite(saved) && saved >= 20 && saved <= 80 ? saved : 44;
+  });
+  const mqlSplitRef = useRef<HTMLDivElement | null>(null);
+  const monacoEditorsRef = useRef<Set<Parameters<OnMount>[0]>>(new Set());
 
   const selectedConn = connections.find((c) => c.id === connId);
   const dbs = databasesByConn[connId] ?? [];
@@ -404,7 +410,63 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeTabId, tab.id, saveModalMode]);
 
+  // Keep-Alive Monaco Layout Sync when tab becomes active
+  useEffect(() => {
+    if (activeTabId === tab.id) {
+      const raf = window.requestAnimationFrame(() => {
+        monacoEditorsRef.current.forEach((ed) => ed.layout());
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+  }, [activeTabId, tab.id]);
+
+  // Listen for Classic Menu Bar actions
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onMenuAction = (e: Event) => {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === "save") actionsRef.current.handleSaveQuery();
+      else if (action === "save_as") setSaveModalMode("save_as");
+      else if (action === "format_sql") actionsRef.current.handleFormatJson();
+    };
+    window.addEventListener("dba:menu-action", onMenuAction);
+    return () => window.removeEventListener("dba:menu-action", onMenuAction);
+  }, [activeTabId, tab.id]);
+
+  const startMqlSplitResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const container = mqlSplitRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      const pct = Math.max(20, Math.min(80, ((ev.clientY - rect.top) / rect.height) * 100));
+      const rounded = Math.round(pct * 10) / 10;
+      setEditorHeightPct(rounded);
+      localStorage.setItem("dv_mongo_editor_split_pct", String(rounded));
+      window.requestAnimationFrame(() => {
+        monacoEditorsRef.current.forEach((ed) => ed.layout());
+      });
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
   const handleMonacoMount: OnMount = (editor, monaco) => {
+    monacoEditorsRef.current.add(editor);
+    editor.onDidDispose(() => {
+      monacoEditorsRef.current.delete(editor);
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       actionsRef.current.handleRunActive();
     });
@@ -425,18 +487,18 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const activeStageRes = stageResults.find((r) => r.stageIndex === selectedStageIdx);
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
       {/* Toolbar */}
-      <div className="px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           {/* Mode Switcher */}
-          <div className="flex rounded border border-zinc-300 dark:border-zinc-700 overflow-hidden">
+          <div className="flex rounded border border-[var(--border-strong)] overflow-hidden">
             <button
               onClick={() => setMode("mql")}
               className={`h-7 px-2.5 flex items-center gap-1.5 ${
                 mode === "mql"
                   ? "bg-emerald-600 text-white font-medium"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Braces className="w-3.5 h-3.5" /> MQL Editor
@@ -446,7 +508,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2.5 flex items-center gap-1.5 ${
                 mode === "pipeline"
                   ? "bg-emerald-600 text-white font-medium"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Layers className="w-3.5 h-3.5" /> Aggregation Pipeline Builder
@@ -463,7 +525,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   if (op === "aggregate") setPayloadJson("[\n  { \"$match\": {} },\n  { \"$limit\": 20 }\n]");
                   else setPayloadJson("{\n  \n}");
                 }}
-                className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
               >
                 <option value="find">find</option>
                 <option value="aggregate">aggregate</option>
@@ -484,7 +546,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               <button
                 onClick={handleExplain}
                 disabled={running}
-                className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+                className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
               >
                 <Activity className="w-3.5 h-3.5 text-amber-400" /> Explain
               </button>
@@ -503,21 +565,21 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             onClick={handleFormatJson}
             title="Format JSON (Ctrl+Shift+F)"
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <AlignLeft className="w-3.5 h-3.5" /> Format
           </button>
           <button
             onClick={handleSaveQuery}
             title={tab.savedQueryPath ? "Save Query (Ctrl+S)" : "Save Query to Workspace (Ctrl+S)"}
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <Save className="w-3.5 h-3.5" /> Save
           </button>
           <button
             onClick={() => setSaveModalMode("save_as")}
             title="Save a Copy As..."
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <SaveAll className="w-3.5 h-3.5" /> Save As
           </button>
@@ -528,7 +590,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <select
             value={connId}
             onChange={(e) => setConnId(e.target.value)}
-            className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+            className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
           >
             <option value="">MongoDB Connection...</option>
             {mongoConns.map((c) => (
@@ -540,7 +602,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <select
             value={effectiveDb}
             onChange={(e) => setDatabase(e.target.value)}
-            className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+            className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
           >
             {dbs.length === 0 && <option value={effectiveDb}>{effectiveDb}</option>}
             {dbs.map((d) => (
@@ -554,7 +616,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             onChange={(e) => setCollection(e.target.value)}
             list="mongo-colls-list"
             placeholder="collection"
-            className="h-7 px-2 w-40 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+            className="h-7 px-2 w-40 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
           />
           <datalist id="mongo-colls-list">
             {collections.map((c) => (
@@ -571,10 +633,13 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       )}
 
       {mode === "mql" ? (
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="h-[44%] min-h-[160px] flex border-b border-zinc-200 dark:border-zinc-800">
+        <div ref={mqlSplitRef} className="flex-1 flex flex-col min-h-0">
+          <div
+            style={{ height: `${editorHeightPct}%` }}
+            className="min-h-[120px] shrink-0 flex"
+          >
             <div className="flex-1 flex flex-col">
-              <div className="px-2.5 py-1 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 text-[0.72rem] text-zinc-500 flex items-center justify-between">
+              <div className="px-2.5 py-1 bg-[var(--surface-panel)] border-b border-[var(--border-subtle)] text-[0.72rem] text-zinc-500 flex items-center justify-between">
                 <span>
                   {operation === "aggregate"
                     ? "Pipeline Stages (JSON Array)"
@@ -591,7 +656,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                       type="number"
                       value={limit}
                       onChange={(e) => setLimit(Number(e.target.value) || 100)}
-                      className="w-16 h-5 px-1 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                      className="w-16 h-5 px-1 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                     />
                   </label>
                 )}
@@ -618,8 +683,8 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             </div>
 
             {operation === "updateMany" && (
-              <div className="flex-1 flex flex-col border-l border-zinc-200 dark:border-zinc-800">
-                <div className="px-2.5 py-1 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 text-[0.72rem] text-zinc-500">
+              <div className="flex-1 flex flex-col border-l border-[var(--border-subtle)]">
+                <div className="px-2.5 py-1 bg-[var(--surface-panel)] border-b border-[var(--border-subtle)] text-[0.72rem] text-zinc-500">
                   Update Document JSON (e.g. $set)
                 </div>
                 <div className="flex-1">
@@ -645,6 +710,13 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             )}
           </div>
 
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            onPointerDown={startMqlSplitResize}
+            className="h-1 shrink-0 cursor-row-resize bg-[var(--border-subtle)] hover:bg-indigo-500/70 active:bg-indigo-500 transition-colors"
+          />
+
           <div className="flex-1 overflow-auto p-3">
             {explainResult ? (
               <div className="space-y-2">
@@ -657,7 +729,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     className={`p-2.5 rounded-lg border ${
                       explainResult.root.isFullScan
                         ? "border-amber-500/50 bg-amber-500/10"
-                        : "border-zinc-700 bg-zinc-900"
+                        : "border-[var(--border-strong)] bg-[var(--surface-panel)]"
                     }`}
                   >
                     <div className="flex items-center gap-2 font-semibold">
@@ -673,7 +745,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     </div>
                   </div>
                 )}
-                <pre className="p-3 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs overflow-auto">
+                <pre className="p-3 rounded bg-[var(--surface-panel)] border border-[var(--border-subtle)] font-mono text-xs overflow-auto">
                   {JSON.stringify(explainResult.rawJson, null, 2)}
                 </pre>
               </div>
@@ -682,7 +754,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <div className="text-emerald-400 font-mono">
                   {mqlResult.summary} ({mqlResult.executionMs}ms)
                 </div>
-                <pre className="p-3 rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 font-mono text-xs overflow-auto whitespace-pre-wrap">
+                <pre className="p-3 rounded bg-[var(--surface-panel)] border border-[var(--border-subtle)] font-mono text-xs overflow-auto whitespace-pre-wrap">
                   {JSON.stringify(mqlResult.documents, null, 2)}
                 </pre>
               </div>
@@ -697,7 +769,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         /* Stage-by-Stage Aggregation Pipeline Builder */
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Left: Ordered Stage Cards */}
-          <div className="w-1/2 border-r border-zinc-200 dark:border-zinc-800 overflow-y-auto p-3 space-y-2.5">
+          <div className="w-1/2 border-r border-[var(--border-subtle)] overflow-y-auto p-3 space-y-2.5">
             {stages.map((st, idx) => {
               const res = stageResults.find((r) => r.stageIndex === idx);
               const isSelected = selectedStageIdx === idx;
@@ -708,7 +780,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   className={`rounded-lg border p-2.5 transition ${
                     isSelected
                       ? "border-emerald-500 bg-emerald-500/5"
-                      : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50"
+                      : "border-[var(--border-subtle)] bg-[var(--surface-panel)]/50"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
@@ -739,7 +811,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             )
                           );
                         }}
-                        className="h-6 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono font-semibold text-emerald-400"
+                        className="h-6 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono font-semibold text-emerald-400"
                       >
                         {AGG_OPERATORS.map((op) => (
                           <option key={op} value={op}>
@@ -788,7 +860,7 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                       )
                     }
                     rows={4}
-                    className="w-full p-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full p-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
               );
@@ -813,8 +885,8 @@ export const MongoQueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           </div>
 
           {/* Right: Live Stage Output Preview */}
-          <div className="w-1/2 flex flex-col min-h-0 bg-zinc-50/50 dark:bg-zinc-950">
-            <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 font-semibold flex items-center justify-between">
+          <div className="w-1/2 flex flex-col min-h-0 bg-zinc-50/50 dark:bg-[#1e1f22]">
+            <div className="px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] font-semibold flex items-center justify-between">
               <span>
                 Stage {selectedStageIdx + 1} Output Preview (
                 {stages[selectedStageIdx]?.operator ?? "—"})

@@ -591,7 +591,7 @@ export const AutomationWorkbench: React.FC<{ tab: WorkbenchTab }> = () => {
                             rows={3}
                             value={String(step.config.sql ?? "")}
                             onChange={(e) => updateStepConfig(step.id, "sql", e.target.value)}
-                            className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-zinc-950 text-emerald-300 font-mono text-[0.72rem]"
+                            className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-[#1e1f22] text-emerald-300 font-mono text-[0.72rem]"
                           />
                         </div>
                       ) : step.kind === "sql_dump" ? (
@@ -651,7 +651,7 @@ export const AutomationWorkbench: React.FC<{ tab: WorkbenchTab }> = () => {
                                 // ignore invalid JSON while typing
                               }
                             }}
-                            className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-zinc-950 text-sky-300 font-mono text-[0.7rem]"
+                            className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-[#1e1f22] text-sky-300 font-mono text-[0.7rem]"
                           />
                         </div>
                       )}
@@ -901,7 +901,7 @@ export const AutomationWorkbench: React.FC<{ tab: WorkbenchTab }> = () => {
                 <div className="px-3 py-2 border-b border-zinc-200 dark:border-[#32343a] bg-zinc-50 dark:bg-[#23252a] font-semibold">
                   Execution Output
                 </div>
-                <pre className="flex-1 p-3 bg-zinc-950 text-emerald-300 font-mono text-[0.72rem] overflow-auto whitespace-pre-wrap">
+                <pre className="flex-1 p-3 bg-[#1e1f22] text-emerald-300 font-mono text-[0.72rem] overflow-auto whitespace-pre-wrap">
                   {selectedLog
                     ? selectedLog.output
                     : "-- Select a run on the left to inspect logs."}

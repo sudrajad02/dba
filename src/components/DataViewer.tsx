@@ -34,6 +34,7 @@ import {
 } from "../lib/gridFormatters";
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
+import { ContextMenu } from "./ContextMenu";
 import type {
   FilterCondition,
   QueryResultSet,
@@ -199,9 +200,9 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     isInsert: boolean;
   } | null>(null);
 
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const headerMenuRef = useRef<HTMLDivElement>(null);
-  const cellMenuRef = useRef<HTMLDivElement>(null);
   const draggingHeaderRef = useRef<{ active: boolean; anchorCol: number }>({
     active: false,
     anchorCol: -1,
@@ -327,30 +328,6 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     return () => window.removeEventListener("mouseup", onMouseUp);
   }, []);
 
-  // Dismiss context menus on outside click or Escape
-  useEffect(() => {
-    if (!headerMenu && !cellMenu) return;
-    const onOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (headerMenuRef.current && headerMenuRef.current.contains(target)) return;
-      if (cellMenuRef.current && cellMenuRef.current.contains(target)) return;
-      setHeaderMenu(null);
-      setCellMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setHeaderMenu(null);
-        setCellMenu(null);
-      }
-    };
-    window.addEventListener("mousedown", onOutside);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onOutside);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [headerMenu, cellMenu]);
-
   const rows = data?.rows ?? [];
   const columns = data?.columns ?? [];
   const visibleCols = useMemo(
@@ -365,9 +342,51 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 36,
+    estimateSize: () => 26,
     overscan: 15,
   });
+
+  const startColumnResize = (e: React.PointerEvent<HTMLDivElement>, colName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.currentTarget as HTMLElement).parentElement;
+    const startX = e.clientX;
+    const startW = colWidths[colName] ?? th?.getBoundingClientRect().width ?? 140;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      const nextW = Math.max(60, Math.min(720, Math.round(startW + (ev.clientX - startX))));
+      setColWidths((prev) => ({ ...prev, [colName]: nextW }));
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const autoFitColumn = (colName: string, origIdx: number, dataType: string) => {
+    let maxLen = colName.length + formatDataType(dataType).length + 4;
+    const sample = rows.slice(0, 100);
+    for (const r of sample) {
+      const val = r[origIdx];
+      const str =
+        val === null || val === undefined
+          ? "NULL"
+          : typeof val === "object"
+          ? JSON.stringify(val)
+          : String(val);
+      if (str.length > maxLen) maxLen = str.length;
+    }
+    const fitted = Math.max(76, Math.min(480, Math.round(maxLen * 7.5 + 32)));
+    setColWidths((prev) => ({ ...prev, [colName]: fitted }));
+  };
 
   // Helper to get effective cell value (staged patch or original)
   const getEffectiveValue = useCallback(
@@ -534,6 +553,47 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     if (changes.length === 0) return;
     await applyChangesPayload(changes);
   }, [buildStagedPayload, applyChangesPayload]);
+
+  // Sync dirty status for Unsaved Changes Guard
+  useEffect(() => {
+    const isDirty = totalStagedCount > 0;
+    if (Boolean(tab.dirty) !== isDirty) {
+      updateTab(tab.id, { dirty: isDirty });
+    }
+  }, [totalStagedCount, tab.dirty, tab.id, updateTab]);
+
+  // Manual refresh (F5 / Ctrl+R) & File -> Save menu action when this tab is active
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")) {
+        e.preventDefault();
+        fetchData();
+      }
+    };
+    const onMenuAction = (e: Event) => {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === "save" && totalStagedCount > 0) {
+        handleApplyChanges();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("dba:menu-action", onMenuAction);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("dba:menu-action", onMenuAction);
+    };
+  }, [activeTabId, tab.id, fetchData, totalStagedCount, handleApplyChanges]);
 
   const handlePreviewSql = async () => {
     if (!tab.connectionId || !tab.table) return;
@@ -1301,11 +1361,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       setColSelectionAnchor(vColIdx);
       setCellRange(null);
     }
-    const menuW = 248;
-    const menuH = 420;
-    const x = Math.max(8, Math.min(e.clientX, window.innerWidth - menuW - 8));
-    const y = Math.max(8, Math.min(e.clientY, window.innerHeight - menuH - 8));
-    setHeaderMenu({ x, y, vColIdx });
+    setHeaderMenu({ x: e.clientX, y: e.clientY, vColIdx });
   };
 
   // Cell mouse selection & context menu handlers
@@ -1366,11 +1422,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       setActiveCell({ isInsert: false, row: rowIdx, colIdx: vColIdx });
       setSelectedRowIdx(rowIdx);
     }
-    const menuW = 248;
-    const menuH = 440;
-    const x = Math.max(8, Math.min(e.clientX, window.innerWidth - menuW - 8));
-    const y = Math.max(8, Math.min(e.clientY, window.innerHeight - menuH - 8));
-    setCellMenu({ x, y, rowIdx, vColIdx, isInsert });
+    setCellMenu({ x: e.clientX, y: e.clientY, rowIdx, vColIdx, isInsert });
   };
 
   const totalPages = data?.totalCount ? Math.max(1, Math.ceil(data.totalCount / pageSize)) : 1;
@@ -1382,14 +1434,14 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       : "bg-emerald-500";
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
       {/* Toolbar */}
-      <div className="px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={fetchData}
             title="Refresh Data"
-            className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+            className="h-7 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -1407,7 +1459,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             className={`h-7 px-2.5 rounded border flex items-center gap-1.5 ${
               showFilters || appliedFilters.length > 0
                 ? "border-indigo-500 bg-indigo-500/15 text-indigo-500 dark:text-indigo-400"
-                : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                : "border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
             }`}
           >
             <Filter className="w-3.5 h-3.5" />
@@ -1417,7 +1469,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           {!isReadOnly && (
             <button
               onClick={addBlankRow}
-              className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+              className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
             >
               <Plus className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
               Add Row
@@ -1425,14 +1477,14 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           )}
 
           {/* Grid / Form View Toggle */}
-          <div className="flex rounded border border-zinc-300 dark:border-zinc-700 overflow-hidden ml-1">
+          <div className="flex rounded border border-[var(--border-strong)] overflow-hidden ml-1">
             <button
               onClick={() => setViewMode("grid")}
               title="Spreadsheet Grid View"
               className={`h-7 px-2 flex items-center ${
                 viewMode === "grid"
                   ? "bg-indigo-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
@@ -1443,7 +1495,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2 flex items-center ${
                 viewMode === "form"
                   ? "bg-indigo-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <List className="w-3.5 h-3.5" />
@@ -1458,7 +1510,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-2 rounded border flex items-center gap-1 text-[0.8rem] ${
                 instantCommit
                   ? "border-amber-500 bg-amber-500/15 text-amber-500 dark:text-amber-400"
-                  : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+                  : "border-[var(--border-strong)] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
               }`}
             >
               <Zap className="w-3 h-3" />
@@ -1487,7 +1539,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               </span>
               <button
                 onClick={handlePreviewSql}
-                className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+                className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
               >
                 <Code2 className="w-3.5 h-3.5" />
                 Preview SQL
@@ -1498,7 +1550,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   setStagedDeletes(new Set());
                   setStagedInserts([]);
                 }}
-                className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400 flex items-center gap-1"
+                className="h-7 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] text-zinc-400 flex items-center gap-1"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Discard
@@ -1514,7 +1566,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           )}
 
           {/* Navicat-Style Connection / Database / Schema Switcher */}
-          <div className="flex items-center gap-1 pl-1.5 border-l border-zinc-300 dark:border-zinc-700">
+          <div className="flex items-center gap-1 pl-1.5 border-l border-[var(--border-strong)]">
             <span
               className={`w-2 h-2 rounded-full shrink-0 ${envDotClass}`}
               title={`Environment: ${conn?.environment ?? "local"}`}
@@ -1524,7 +1576,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               disabled={switchingDb}
               onChange={(e) => handleSwitchConnection(e.target.value)}
               title="Switch SQL Connection"
-              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[150px] truncate"
+              className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] max-w-[150px] truncate"
             >
               {sqlConnections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -1537,7 +1589,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               disabled={switchingDb || !tab.connectionId}
               onChange={(e) => handleSwitchDatabase(e.target.value)}
               title="Switch Database"
-              className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[140px] truncate font-mono"
+              className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] max-w-[140px] truncate font-mono"
             >
               {activeDb && !dbs.some((d) => d.name === activeDb) && (
                 <option value={activeDb}>{activeDb}</option>
@@ -1554,7 +1606,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 disabled={switchingDb || !activeDb}
                 onChange={(e) => handleSwitchSchema(e.target.value)}
                 title="Switch Schema"
-                className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 max-w-[120px] truncate font-mono"
+                className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] max-w-[120px] truncate font-mono"
               >
                 {tab.schema && !schemas.some((s) => s.name === tab.schema) && (
                   <option value={tab.schema}>{tab.schema}</option>
@@ -1572,7 +1624,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
 
       {/* Visual Filter Builder (Manual Apply via Enter or Apply Button) */}
       {showFilters && (
-        <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 space-y-1.5">
+        <div className="px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] space-y-1.5">
           {draftFilters.map((f, idx) => (
             <div key={idx} className="flex items-center gap-1.5">
               <select
@@ -1582,7 +1634,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     prev.map((x, i) => (i === idx ? { ...x, column: e.target.value } : x))
                   )
                 }
-                className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
               >
                 {columns.map((c) => (
                   <option key={c.name} value={c.name}>
@@ -1597,7 +1649,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     prev.map((x, i) => (i === idx ? { ...x, operator: e.target.value } : x))
                   )
                 }
-                className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
               >
                 {FILTER_OPS.map((op) => (
                   <option key={op} value={op}>
@@ -1620,7 +1672,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     }
                   }}
                   placeholder={f.operator === "IN" ? "1, 2, 3" : "Value... (Enter to apply)"}
-                  className="h-7 px-2 w-52 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 w-52 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
               )}
               {f.operator === "BETWEEN" && (
@@ -1638,7 +1690,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     }
                   }}
                   placeholder="End value..."
-                  className="h-7 px-2 w-40 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 w-40 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
               )}
               <button
@@ -1657,7 +1709,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   { column: columns[0]?.name ?? "", operator: "=", value: "" },
                 ])
               }
-              className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+              className="h-6 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Add Condition
             </button>
@@ -1674,7 +1726,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   setAppliedFilters([]);
                   setPage(1);
                 }}
-                className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500"
+                className="h-6 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] text-zinc-500"
               >
                 Clear
               </button>
@@ -1701,7 +1753,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     title: e.target.value,
                   });
                 }}
-                className="h-6 px-2 rounded bg-zinc-900 border border-zinc-700 text-xs font-mono"
+                className="h-6 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] text-xs font-mono"
               >
                 <option value="">Select table...</option>
                 {availableTables.map((t) => (
@@ -1719,36 +1771,42 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       {viewMode === "grid" ? (
         <div ref={scrollContainerRef} className="flex-1 overflow-auto relative select-none">
           <table className="w-max min-w-full border-collapse text-left">
-            <thead className="sticky top-0 z-10 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
+            <thead className="sticky top-0 z-10 bg-[var(--surface-panel)] border-b border-[var(--border-subtle)]">
               <tr>
-                <th className="w-12 px-2 py-1.5 text-[0.72rem] font-semibold text-zinc-500 border-r border-zinc-200 dark:border-zinc-800">
+                <th className="w-12 px-2 py-1.5 text-[0.72rem] font-semibold text-zinc-500 border-r border-[var(--border-subtle)]">
                   #
                 </th>
-                {visibleCols.map(({ col }, vColIdx) => {
+                {visibleCols.map(({ col, origIdx }, vColIdx) => {
                   const sort = sorts.find((s) => s.column === col.name);
                   const isColSel = selectedCols.has(vColIdx);
+                  const customW = colWidths[col.name];
                   return (
                     <th
                       key={col.name}
+                      style={
+                        customW
+                          ? { width: customW, minWidth: customW, maxWidth: customW }
+                          : undefined
+                      }
                       onMouseDown={(e) => handleHeaderMouseDown(e, vColIdx)}
                       onMouseEnter={() => handleHeaderMouseEnter(vColIdx)}
                       onDoubleClick={() => toggleSort(col.name)}
                       onContextMenu={(e) => handleHeaderContextMenu(e, vColIdx)}
-                      className={`px-2.5 py-1.5 font-semibold border-r border-zinc-200 dark:border-zinc-800 cursor-pointer whitespace-nowrap select-none transition-colors ${
+                      className={`relative px-2.5 py-1 font-semibold border-r border-[var(--border-subtle)] cursor-pointer whitespace-nowrap select-none transition-colors ${
                         isColSel
                           ? "bg-indigo-500/25 text-indigo-700 dark:text-indigo-200"
-                          : "text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/80"
+                          : "text-zinc-700 dark:text-zinc-200 hover:bg-[var(--surface-hover)]"
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <div className="flex items-center gap-1.5">
+                      <div className="flex items-center justify-between gap-1.5 pr-1">
+                        <div className="flex items-center gap-1.5 min-w-0 truncate">
                           {col.isPrimaryKey && (
-                            <span className="text-[0.68rem] px-1 rounded bg-amber-500/20 text-amber-400">
+                            <span className="text-[0.68rem] px-1 rounded bg-amber-500/20 text-amber-400 shrink-0">
                               PK
                             </span>
                           )}
-                          <span>{col.name}</span>
-                          <span className="text-[0.68rem] font-normal text-neutral-400 dark:text-neutral-500">
+                          <span className="truncate">{col.name}</span>
+                          <span className="text-[0.68rem] font-normal text-neutral-400 dark:text-neutral-500 shrink-0">
                             {formatDataType(col.dataType)}
                           </span>
                         </div>
@@ -1763,7 +1821,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                               ? `Sorted ${sort.direction} (click to toggle)`
                               : `Sort by ${col.name}`
                           }
-                          className={`p-0.5 rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70 ${
+                          className={`p-0.5 rounded hover:bg-zinc-300/70 dark:hover:bg-zinc-700/70 shrink-0 ${
                             sort
                               ? "text-indigo-500 dark:text-indigo-400"
                               : "text-zinc-400 opacity-50 hover:opacity-100"
@@ -1780,6 +1838,16 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                           )}
                         </button>
                       </div>
+                      <div
+                        onPointerDown={(e) => startColumnResize(e, col.name)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          autoFitColumn(col.name, origIdx, col.dataType);
+                        }}
+                        title="Drag to resize • Double-click to auto-fit"
+                        className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-500/60"
+                      />
                     </th>
                   );
                 })}
@@ -1835,7 +1903,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                               commitCellEdit(iIdx, col.name, true);
                             }}
                             onKeyDown={(e) => handleEditInputKeyDown(e, iIdx, col.name, true)}
-                            className="w-full bg-zinc-950 text-white px-1 py-0.5 rounded border border-emerald-500 focus:outline-none select-text"
+                            className="w-full bg-[var(--surface-canvas)] text-zinc-900 dark:text-zinc-100 px-1 py-0.5 rounded border border-emerald-500 focus:outline-none select-text"
                           />
                         ) : (
                           <span className={val == null ? "text-zinc-500 italic" : ""}>
@@ -1861,15 +1929,15 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   <tr
                     key={vRow.key}
                     onClick={() => setSelectedRowIdx(rowIdx)}
-                    className={`border-b border-zinc-200/70 dark:border-zinc-800/70 ${
+                    className={`border-b border-[var(--border-subtle)] ${
                       isDeleted
                         ? "bg-red-500/15 line-through text-red-400"
                         : rowIdx === selectedRowIdx
                         ? "bg-indigo-500/10"
-                        : "hover:bg-zinc-100/70 dark:hover:bg-zinc-900/80"
+                        : "hover:bg-[var(--surface-hover)]"
                     }`}
                   >
-                    <td className="px-2 py-1 text-[0.72rem] text-zinc-500 border-r border-zinc-200 dark:border-zinc-800 font-mono flex items-center justify-between gap-1">
+                    <td className="px-2 py-1 text-[0.72rem] text-zinc-500 border-r border-[var(--border-subtle)] font-mono flex items-center justify-between gap-1">
                       <span>{(page - 1) * pageSize + rowIdx + 1}</span>
                       {!isReadOnly && (
                         <button
@@ -1902,10 +1970,16 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                         activeCell?.colIdx === vColIdx;
                       const inSelection = isCellSelected(rowIdx, vColIdx);
 
+                      const customW = colWidths[col.name];
                       return (
                         <td
                           key={col.name}
                           data-cell-key={`row-${rowIdx}-${vColIdx}`}
+                          style={
+                            customW
+                              ? { width: customW, minWidth: customW, maxWidth: customW }
+                              : undefined
+                          }
                           onMouseDown={(e) => handleCellMouseDown(e, rowIdx, vColIdx)}
                           onMouseEnter={() => handleCellMouseEnter(rowIdx, vColIdx)}
                           onDoubleClick={() => {
@@ -1915,7 +1989,9 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                           onContextMenu={(e) =>
                             handleCellContextMenu(e, rowIdx, vColIdx, false)
                           }
-                          className={`px-2.5 py-1 border-r border-zinc-200/70 dark:border-zinc-800/70 font-mono max-w-[300px] truncate ${
+                          className={`px-2.5 py-0.5 h-[26px] border-r border-[var(--border-subtle)]/70 font-mono truncate ${
+                            customW ? "" : "max-w-[300px]"
+                          } ${
                             hasPatch
                               ? "bg-amber-500/20 text-amber-300"
                               : inSelection
@@ -1938,7 +2014,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                               onKeyDown={(e) =>
                                 handleEditInputKeyDown(e, rowIdx, col.name, false)
                               }
-                              className="w-full bg-zinc-950 text-white px-1 py-0.5 rounded border border-indigo-500 focus:outline-none select-text"
+                              className="w-full bg-[var(--surface-canvas)] text-zinc-900 dark:text-zinc-100 px-1 py-0.5 rounded border border-indigo-500 focus:outline-none select-text"
                             />
                           ) : (
                             <div className="flex items-center justify-between gap-1.5">
@@ -1994,7 +2070,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         <div className="flex-1 overflow-auto p-4 max-w-2xl">
           {rows[selectedRowIdx] ? (
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between pb-2 border-b border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
                 <span className="font-semibold">
                   Row {(page - 1) * pageSize + selectedRowIdx + 1} of {rows.length}
                 </span>
@@ -2043,7 +2119,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                           },
                         }));
                       }}
-                      className="col-span-2 p-1.5 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono text-xs"
+                      className="col-span-2 p-1.5 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono text-xs"
                     />
                   </div>
                 );
@@ -2067,17 +2143,18 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         const plural = selectedColNames.length > 1;
 
         return (
-          <div
-            ref={headerMenuRef}
-            style={{ top: headerMenu.y, left: headerMenu.x }}
-            className="fixed z-50 w-60 py-1 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs"
+          <ContextMenu
+            x={headerMenu.x}
+            y={headerMenu.y}
+            onClose={() => setHeaderMenu(null)}
+            className="w-60"
           >
             <button
               onClick={() => {
                 copyToClipboard(selectedColNames.join(", "), "column name(s)");
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <Copy className="w-3.5 h-3.5 text-zinc-400" />
               Copy Column Name{plural ? `s (${selectedColNames.length})` : ""}
@@ -2087,20 +2164,20 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copyToClipboard(selectedColNames.join("\n"), "column name(s) (newline)");
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <Copy className="w-3.5 h-3.5 text-zinc-400" />
               Copy Column Name{plural ? "s" : ""} (Newline)
             </button>
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             <button
               onClick={() => {
                 copySelectionFormatted("tsv", allRowIndices, colIndices);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Selected (TSV)
             </button>
@@ -2109,7 +2186,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copySelectionFormatted("tsv_headers", allRowIndices, colIndices);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Selected with Headers
             </button>
@@ -2118,7 +2195,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copySelectionFormatted("csv", allRowIndices, colIndices);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Selected as CSV
             </button>
@@ -2127,7 +2204,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copySelectionFormatted("json", allRowIndices, colIndices);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Selected as JSON
             </button>
@@ -2136,12 +2213,12 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copySelectionFormatted("insert_sql", allRowIndices, colIndices);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Selected as INSERT SQL
             </button>
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             <button
               disabled={isReadOnly || rows.length === 0}
@@ -2149,7 +2226,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 batchSetSelectedValue(allRowIndices, colIndices, null);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40"
             >
               Set Selected Cells to <span className="font-mono text-zinc-400">NULL</span>
             </button>
@@ -2159,19 +2236,19 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 batchSetSelectedValue(allRowIndices, colIndices, "");
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40"
             >
               Set Selected Cells to Empty String <span className="font-mono text-zinc-400">("")</span>
             </button>
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             <button
               onClick={() => {
                 setColumnSort(targetVCol.col.name, "ASC");
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <ArrowUp className="w-3.5 h-3.5 text-zinc-400" /> Sort Ascending
             </button>
@@ -2180,7 +2257,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 setColumnSort(targetVCol.col.name, "DESC");
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <ArrowDown className="w-3.5 h-3.5 text-zinc-400" /> Sort Descending
             </button>
@@ -2189,7 +2266,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 setColumnSort(targetVCol.col.name, null);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Clear Sort
             </button>
@@ -2202,12 +2279,12 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 setShowFilters(true);
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <Filter className="w-3.5 h-3.5 text-zinc-400" /> Filter by Column
             </button>
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             <button
               disabled={visibleCols.length - selectedColNames.length < 1}
@@ -2220,7 +2297,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 setSelectedCols(new Set());
                 setHeaderMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40 flex items-center gap-2"
             >
               <EyeOff className="w-3.5 h-3.5 text-zinc-400" />
               Hide Selected Column{plural ? "s" : ""}
@@ -2231,12 +2308,12 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   setHiddenColumns(new Set());
                   setHeaderMenu(null);
                 }}
-                className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 text-indigo-400 flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] text-indigo-400 flex items-center gap-2"
               >
                 <Eye className="w-3.5 h-3.5" /> Show All Columns ({hiddenColumns.size})
               </button>
             )}
-          </div>
+          </ContextMenu>
         );
       })()}
 
@@ -2257,10 +2334,11 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         const allVisibleColIndices = visibleCols.map((_, i) => i);
 
         return (
-          <div
-            ref={cellMenuRef}
-            style={{ top: cellMenu.y, left: cellMenu.x }}
-            className="fixed z-50 w-60 py-1 rounded-lg shadow-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs max-h-[85vh] overflow-y-auto"
+          <ContextMenu
+            x={cellMenu.x}
+            y={cellMenu.y}
+            onClose={() => setCellMenu(null)}
+            className="w-60"
           >
             {/* Value Actions */}
             <button
@@ -2273,7 +2351,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 }
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40"
             >
               {multiActive ? "Set Selected Cells to " : "Set to "}
               <span className="font-mono text-zinc-400">NULL</span>
@@ -2288,7 +2366,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 }
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40"
             >
               {multiActive ? "Set Selected Cells to " : "Set to Empty String "}
               <span className="font-mono text-zinc-400">("")</span>
@@ -2303,7 +2381,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 });
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40 flex items-center gap-2"
             >
               <Edit3 className="w-3.5 h-3.5 text-zinc-400" /> Edit Cell
             </button>
@@ -2322,13 +2400,13 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   });
                   setCellMenu(null);
                 }}
-                className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 text-amber-400 flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] text-amber-400 flex items-center gap-2"
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Undo Cell Change
               </button>
             )}
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             {/* Copy Actions */}
             <button
@@ -2336,7 +2414,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copyToClipboard(formatRawClipboardValue(cellVal), "cell value");
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
             >
               <Copy className="w-3.5 h-3.5 text-zinc-400" /> Copy Cell Value
             </button>
@@ -2345,7 +2423,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 copyToClipboard(col.name, "column name");
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
             >
               Copy Column Name
             </button>
@@ -2356,7 +2434,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("tsv");
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Selected Cells (TSV)
                 </button>
@@ -2365,7 +2443,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("csv");
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Selected as CSV
                 </button>
@@ -2374,7 +2452,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("json");
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Selected as JSON
                 </button>
@@ -2383,7 +2461,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("insert_sql");
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Selected as INSERT SQL
                 </button>
@@ -2396,7 +2474,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("json", [cellMenu.rowIdx], allVisibleColIndices);
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Row as JSON
                 </button>
@@ -2409,7 +2487,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     );
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Row as INSERT SQL
                 </button>
@@ -2418,7 +2496,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     copySelectionFormatted("tsv", [cellMenu.rowIdx], allVisibleColIndices);
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Copy Row as TSV
                 </button>
@@ -2428,13 +2506,13 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             {/* Quick Filter & FK Jump */}
             {!isInsert && (
               <>
-                <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                <div className="my-1 border-t border-[var(--border-subtle)]" />
                 <button
                   onClick={() => {
                     applyQuickFilter(col.name, cellVal, false);
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] flex items-center gap-2"
                 >
                   <Filter className="w-3.5 h-3.5 text-zinc-400" /> Filter by This Value
                 </button>
@@ -2443,7 +2521,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     applyQuickFilter(col.name, cellVal, true);
                     setCellMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
                 >
                   Exclude This Value
                 </button>
@@ -2467,7 +2545,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                       });
                       setCellMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 text-indigo-400 flex items-center gap-2 truncate"
+                    className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] text-indigo-400 flex items-center gap-2 truncate"
                   >
                     <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate">
@@ -2478,7 +2556,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               </>
             )}
 
-            <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
 
             {/* Row Actions */}
             <button
@@ -2487,7 +2565,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 addBlankRow();
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 flex items-center gap-2"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40 flex items-center gap-2"
             >
               <Plus className="w-3.5 h-3.5 text-emerald-400" /> Add Row
             </button>
@@ -2497,7 +2575,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 duplicateRow(cellMenu.rowIdx, isInsert);
                 setCellMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40"
+              className="w-full px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-40"
             >
               Duplicate Row
             </button>
@@ -2530,7 +2608,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 {isDeleted ? "Undo Delete Row" : "Delete Row"}
               </button>
             )}
-          </div>
+          </ContextMenu>
         );
       })()}
 
@@ -2622,7 +2700,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-40"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -2632,7 +2710,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] disabled:opacity-40"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -2646,7 +2724,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           onClick={() => setPreviewSqlModal(null)}
         >
           <div
-            className="w-full max-w-xl rounded-md border border-zinc-700 bg-zinc-900 shadow-2xl overflow-hidden"
+            className="w-full max-w-xl rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between">
@@ -2657,7 +2735,7 @@ export const DataViewer: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <X className="w-4 h-4 text-zinc-400" />
               </button>
             </div>
-            <pre className="p-4 text-[0.8rem] font-mono text-emerald-300 bg-zinc-950 max-h-80 overflow-auto whitespace-pre-wrap">
+            <pre className="p-4 text-[0.8rem] font-mono text-emerald-300 bg-[#1e1f22] max-h-80 overflow-auto whitespace-pre-wrap">
               {previewSqlModal.join("\n")}
             </pre>
             <div className="px-4 py-2.5 border-t border-zinc-800 flex justify-end gap-2">

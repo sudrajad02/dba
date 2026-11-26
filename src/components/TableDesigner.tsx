@@ -61,7 +61,7 @@ const MSSQL_TYPES = [
 ];
 
 export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
-  const { connections, loadObjects, openSafetyModal, addLog } = useWorkbenchStore();
+  const { connections, loadObjects, openSafetyModal, addLog, updateTab } = useWorkbenchStore();
   const conn = connections.find((c) => c.id === tab.connectionId);
   const engine = conn?.engine ?? "postgres";
   const typeList =
@@ -83,33 +83,61 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const [checks, setChecks] = useState<CheckConstraintMeta[]>([]);
   const [ddlPreview, setDdlPreview] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const loadedSnapshotRef = React.useRef<string | null>(null);
 
   // Load existing table structure if editing
   useEffect(() => {
-    if (tab.isNewTable || !tab.connectionId || !tab.table) return;
+    if (tab.isNewTable || !tab.connectionId || !tab.table) {
+      loadedSnapshotRef.current = JSON.stringify({
+        tableName: tab.table ?? "new_table",
+        columns,
+        indexes: [],
+        foreignKeys: [],
+        checks: [],
+      });
+      return;
+    }
     api
       .getTableMetadata(tab.connectionId, tab.table, tab.database, tab.schema)
       .then((meta) => {
+        const mappedCols: TableDesignColumn[] = meta.columns.map((c) => ({
+          name: c.name,
+          originalName: c.name,
+          dataType: c.udtName || c.dataType,
+          length: c.maxLength ? String(c.maxLength) : "",
+          nullable: c.nullable,
+          defaultValue: c.defaultValue ?? "",
+          isPrimaryKey: c.isPrimaryKey,
+          isAutoIncrement: c.isAutoIncrement,
+          comment: c.comment ?? "",
+        }));
+        loadedSnapshotRef.current = JSON.stringify({
+          tableName: meta.name,
+          columns: mappedCols,
+          indexes: meta.indexes,
+          foreignKeys: meta.foreignKeys,
+          checks: meta.checks,
+        });
         setTableName(meta.name);
-        setColumns(
-          meta.columns.map((c) => ({
-            name: c.name,
-            originalName: c.name,
-            dataType: c.udtName || c.dataType,
-            length: c.maxLength ? String(c.maxLength) : "",
-            nullable: c.nullable,
-            defaultValue: c.defaultValue ?? "",
-            isPrimaryKey: c.isPrimaryKey,
-            isAutoIncrement: c.isAutoIncrement,
-            comment: c.comment ?? "",
-          }))
-        );
+        setColumns(mappedCols);
         setIndexes(meta.indexes);
         setForeignKeys(meta.foreignKeys);
         setChecks(meta.checks);
+        updateTab(tab.id, { dirty: false });
       })
       .catch((err) => setError(formatApiError(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.isNewTable, tab.connectionId, tab.database, tab.schema, tab.table]);
+
+  // Track dirty state for Unsaved Changes Guard
+  useEffect(() => {
+    if (!loadedSnapshotRef.current) return;
+    const current = JSON.stringify({ tableName, columns, indexes, foreignKeys, checks });
+    const isDirty = current !== loadedSnapshotRef.current;
+    if (Boolean(tab.dirty) !== isDirty) {
+      updateTab(tab.id, { dirty: isDirty });
+    }
+  }, [tableName, columns, indexes, foreignKeys, checks, tab.dirty, tab.id, updateTab]);
 
   // Live DDL Preview
   useEffect(() => {
@@ -134,6 +162,8 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     try {
       await api.executeDdl(tab.connectionId, ddlPreview, tab.database, confirmed);
       addLog("success", `Applied DDL for table "${tableName}"`);
+      loadedSnapshotRef.current = JSON.stringify({ tableName, columns, indexes, foreignKeys, checks });
+      updateTab(tab.id, { dirty: false });
       if (tab.database) {
         await loadObjects(tab.connectionId, tab.database, tab.schema ?? tab.database);
       }
@@ -156,15 +186,15 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex items-center justify-between gap-3">
+      <div className="px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-zinc-500">Table Name:</span>
           <input
             value={tableName}
             onChange={(e) => setTableName(e.target.value)}
-            className="h-7 px-2.5 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono font-semibold"
+            className="h-7 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono font-semibold"
           />
           <div className="flex items-center gap-1 ml-3">
             {(["columns", "indexes", "fks", "checks"] as const).map((s) => (
@@ -174,7 +204,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 className={`h-7 px-2.5 rounded capitalize ${
                   section === s
                     ? "bg-indigo-600 text-white font-medium"
-                    : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                    : "text-zinc-500 hover:bg-[var(--surface-hover)]"
                 }`}
               >
                 {s === "fks" ? "Foreign Keys" : s}
@@ -204,7 +234,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <div className="space-y-2">
             <table className="w-full border-collapse text-left">
               <thead>
-                <tr className="border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
+                <tr className="border-b border-[var(--border-subtle)] text-zinc-500">
                   <th className="py-1.5 px-2">Column Name</th>
                   <th className="py-1.5 px-2">Data Type</th>
                   <th className="py-1.5 px-2 w-24">Length</th>
@@ -219,7 +249,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 {columns.map((col, idx) => (
                   <tr
                     key={idx}
-                    className="border-b border-zinc-200/60 dark:border-zinc-800/60"
+                    className="border-b border-[var(--border-subtle)]"
                   >
                     <td className="p-1">
                       <input
@@ -231,7 +261,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             )
                           )
                         }
-                        className="w-full h-7 px-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono"
                       />
                     </td>
                     <td className="p-1">
@@ -244,7 +274,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                             )
                           )
                         }
-                        className="w-full h-7 px-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono"
                       >
                         {!typeList.includes(col.dataType) && (
                           <option value={col.dataType}>{col.dataType}</option>
@@ -267,7 +297,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                           )
                         }
                         placeholder="255"
-                        className="w-full h-7 px-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono"
                       />
                     </td>
                     <td className="p-1 text-center">
@@ -322,7 +352,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                           )
                         }
                         placeholder="NULL / NOW()"
-                        className="w-full h-7 px-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono"
                       />
                     </td>
                     <td className="p-1 text-center">
@@ -354,7 +384,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   },
                 ])
               }
-              className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+              className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
             >
               <Plus className="w-3.5 h-3.5" /> Add Column
             </button>
@@ -373,7 +403,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="idx_name"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={idx.columns.join(", ")}
@@ -393,7 +423,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="col1, col2"
-                  className="flex-1 h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="flex-1 h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <label className="flex items-center gap-1">
                   <input
@@ -449,7 +479,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="fk_name"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={fk.columns.join(", ")}
@@ -463,7 +493,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="column"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={fk.refTable}
@@ -473,7 +503,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="ref_table"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={fk.refColumns.join(", ")}
@@ -487,7 +517,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="ref_col"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <select
                   value={fk.onDelete}
@@ -496,7 +526,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                       prev.map((x, k) => (k === i ? { ...x, onDelete: e.target.value } : x))
                     )
                   }
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                 >
                   <option value="NO ACTION">ON DELETE NO ACTION</option>
                   <option value="CASCADE">ON DELETE CASCADE</option>
@@ -545,7 +575,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="chk_name"
-                  className="h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={chk.expression}
@@ -557,7 +587,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     )
                   }
                   placeholder="price >= 0"
-                  className="flex-1 h-7 px-2 rounded bg-zinc-900 border border-zinc-700 font-mono"
+                  className="flex-1 h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <button
                   onClick={() => setChecks((prev) => prev.filter((_, k) => k !== i))}
@@ -583,7 +613,7 @@ export const TableDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       </div>
 
       {/* Live DDL Preview Pane */}
-      <div className="h-44 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-950 flex flex-col">
+      <div className="h-44 border-t border-[var(--border-subtle)] bg-[#1e1f22] flex flex-col">
         <div className="px-3 py-1.5 border-b border-zinc-800 text-[0.8rem] font-semibold text-zinc-400 flex items-center gap-1.5">
           <Code2 className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
           Live DDL Preview ({engine.toUpperCase()})

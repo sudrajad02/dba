@@ -34,6 +34,7 @@ export const ConnectionModal: React.FC = () => {
   const {
     connectionModalOpen,
     editingConnection,
+    initialConnectionEngine,
     closeConnectionModal,
     refreshConnections,
     connectTo,
@@ -122,12 +123,29 @@ export const ConnectionModal: React.FC = () => {
       setSshKeyPath(editingConnection.ssh?.privateKeyPath ?? "~/.ssh/id_ed25519");
       setSshJumpHost(editingConnection.ssh?.jumpHost ?? "");
     } else {
+      const targetEngine: DbEngine = initialConnectionEngine ?? "postgres";
       setName("");
-      setEngine("postgres");
+      setEngine(targetEngine);
       setHost("127.0.0.1");
-      setPort(5432);
-      setDatabase("postgres");
-      setUsername("postgres");
+      setPort(DEFAULT_PORTS[targetEngine]);
+      setDatabase(
+        targetEngine === "postgres"
+          ? "postgres"
+          : targetEngine === "mssql"
+          ? "master"
+          : targetEngine === "mongodb"
+          ? "admin"
+          : ""
+      );
+      setUsername(
+        targetEngine === "postgres"
+          ? "postgres"
+          : targetEngine === "mysql"
+          ? "root"
+          : targetEngine === "mssql"
+          ? "sa"
+          : ""
+      );
       setGroupPath("");
       setEnvironment("local");
       setReadOnly(false);
@@ -141,7 +159,7 @@ export const ConnectionModal: React.FC = () => {
       setSshKeyPath("~/.ssh/id_ed25519");
       setSshJumpHost("");
     }
-  }, [connectionModalOpen, editingConnection]);
+  }, [connectionModalOpen, editingConnection, initialConnectionEngine]);
 
   if (!connectionModalOpen) return null;
 
@@ -295,9 +313,9 @@ export const ConnectionModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60  flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+        <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {editingConnection ? "Edit Connection Profile" : "New Database Connection"}
@@ -309,20 +327,20 @@ export const ConnectionModal: React.FC = () => {
           <button
             type="button"
             onClick={handleClose}
-            className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] text-zinc-500"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Quick URI Import */}
-        <div className="px-5 py-2.5 bg-zinc-50 dark:bg-zinc-950/60 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+        <div className="px-5 py-2.5 bg-[var(--surface-elevated)] border-b border-[var(--border-subtle)] flex items-center gap-2">
           <Link2 className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
           <input
             value={uriInput}
             onChange={(e) => setUriInput(e.target.value)}
             placeholder="Quick URI Import: postgres://user:pass@host:5432/dbname?sslmode=require"
-            className="flex-1 h-7 px-2.5 text-xs rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+            className="flex-1 h-7 px-2.5 text-xs rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
           />
           <button
             onClick={handleImportUri}
@@ -359,7 +377,7 @@ export const ConnectionModal: React.FC = () => {
               className={`flex-1 py-2 px-2.5 rounded-lg border text-xs font-medium transition ${
                 engine === item.id
                   ? "border-indigo-500 bg-indigo-500/15 text-indigo-500 dark:text-indigo-400"
-                  : "border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-400"
+                  : "border-[var(--border-subtle)] text-zinc-500 hover:border-zinc-400"
               }`}
             >
               <div>{item.label}</div>
@@ -368,7 +386,7 @@ export const ConnectionModal: React.FC = () => {
         </div>
 
         {/* Sub Tabs */}
-        <div className="px-5 pt-3 flex gap-4 border-b border-zinc-200 dark:border-zinc-800 text-xs">
+        <div className="px-5 pt-3 flex gap-4 border-b border-[var(--border-subtle)] text-xs">
           {(
             [
               { id: "general", label: "General", icon: KeyRound },
@@ -410,7 +428,7 @@ export const ConnectionModal: React.FC = () => {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Local Postgres"
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                   />
                 </div>
                 <div>
@@ -419,7 +437,7 @@ export const ConnectionModal: React.FC = () => {
                     value={groupPath}
                     onChange={(e) => setGroupPath(e.target.value)}
                     placeholder="e.g. Work / Production"
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                   />
                 </div>
               </div>
@@ -430,7 +448,7 @@ export const ConnectionModal: React.FC = () => {
                   <input
                     value={host}
                     onChange={(e) => setHost(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
                 <div>
@@ -439,7 +457,7 @@ export const ConnectionModal: React.FC = () => {
                     type="number"
                     value={port}
                     onChange={(e) => setPort(Number(e.target.value))}
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
               </div>
@@ -450,7 +468,7 @@ export const ConnectionModal: React.FC = () => {
                   <input
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
                 <div>
@@ -466,7 +484,7 @@ export const ConnectionModal: React.FC = () => {
                         setPasswordDirty(true);
                       }}
                       placeholder={editingConnection?.keyringRef ? "•••••••• (unchanged)" : ""}
-                      className="w-full h-8 pl-2.5 pr-8 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                      className="w-full h-8 pl-2.5 pr-8 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                     />
                     <button
                       type="button"
@@ -474,7 +492,7 @@ export const ConnectionModal: React.FC = () => {
                       disabled={loadingPassword}
                       aria-label={showPassword ? "Hide password" : "Show password"}
                       title={showPassword ? "Hide password" : "Show password"}
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-[var(--surface-hover)] disabled:opacity-50 cursor-pointer"
                     >
                       {loadingPassword ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -495,7 +513,7 @@ export const ConnectionModal: React.FC = () => {
                     value={database}
                     onChange={(e) => setDatabase(e.target.value)}
                     placeholder="Optional"
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
                 <div>
@@ -503,7 +521,7 @@ export const ConnectionModal: React.FC = () => {
                   <select
                     value={environment}
                     onChange={(e) => setEnvironment(e.target.value as EnvironmentTag)}
-                    className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                    className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                   >
                     <option value="local">Local (Green)</option>
                     <option value="dev">Development (Green)</option>
@@ -547,7 +565,7 @@ export const ConnectionModal: React.FC = () => {
                         value={sshHost}
                         onChange={(e) => setSshHost(e.target.value)}
                         placeholder="bastion.example.com"
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                       />
                     </div>
                     <div>
@@ -556,7 +574,7 @@ export const ConnectionModal: React.FC = () => {
                         type="number"
                         value={sshPort}
                         onChange={(e) => setSshPort(Number(e.target.value))}
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                       />
                     </div>
                   </div>
@@ -566,7 +584,7 @@ export const ConnectionModal: React.FC = () => {
                       <input
                         value={sshUsername}
                         onChange={(e) => setSshUsername(e.target.value)}
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                       />
                     </div>
                     <div>
@@ -574,7 +592,7 @@ export const ConnectionModal: React.FC = () => {
                       <select
                         value={sshAuthMethod}
                         onChange={(e) => setSshAuthMethod(e.target.value as SshAuthMethod)}
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                       >
                         <option value="privatekey">Private Key (id_ed25519 / id_rsa)</option>
                         <option value="password">Password</option>
@@ -587,7 +605,7 @@ export const ConnectionModal: React.FC = () => {
                       <input
                         value={sshKeyPath}
                         onChange={(e) => setSshKeyPath(e.target.value)}
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                       />
                     </div>
                   )}
@@ -600,7 +618,7 @@ export const ConnectionModal: React.FC = () => {
                         value={sshJumpHost}
                         onChange={(e) => setSshJumpHost(e.target.value)}
                         placeholder="user@jump.host"
-                        className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                        className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                       />
                     </div>
                     <div>
@@ -619,7 +637,7 @@ export const ConnectionModal: React.FC = () => {
                           placeholder={
                             editingConnection?.ssh?.keyringRef ? "•••••••• (unchanged)" : ""
                           }
-                          className="w-full h-8 pl-2.5 pr-8 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                          className="w-full h-8 pl-2.5 pr-8 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                         />
                         <button
                           type="button"
@@ -627,7 +645,7 @@ export const ConnectionModal: React.FC = () => {
                           disabled={loadingSshSecret}
                           aria-label={showSshSecret ? "Hide password" : "Show password"}
                           title={showSshSecret ? "Hide password" : "Show password"}
-                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer"
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-[var(--surface-hover)] disabled:opacity-50 cursor-pointer"
                         >
                           {loadingSshSecret ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -652,7 +670,7 @@ export const ConnectionModal: React.FC = () => {
                 <select
                   value={sslMode}
                   onChange={(e) => setSslMode(e.target.value as SslMode)}
-                  className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+                  className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
                 >
                   <option value="disable">Disable</option>
                   <option value="prefer">Prefer (Default)</option>
@@ -667,7 +685,7 @@ export const ConnectionModal: React.FC = () => {
                   value={caCertPath}
                   onChange={(e) => setCaCertPath(e.target.value)}
                   placeholder="/path/to/ca-cert.pem"
-                  className="w-full h-8 px-2.5 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-full h-8 px-2.5 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
               </div>
             </div>
@@ -707,11 +725,11 @@ export const ConnectionModal: React.FC = () => {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 flex items-center justify-between">
+        <div className="px-5 py-3 border-t border-[var(--border-subtle)] bg-[var(--surface-elevated)] flex items-center justify-between">
           <button
             onClick={handleTest}
             disabled={testing}
-            className="h-8 px-3.5 rounded-md text-xs font-medium border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+            className="h-8 px-3.5 rounded-md text-xs font-medium border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1.5"
           >
             {testing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             Test Connection

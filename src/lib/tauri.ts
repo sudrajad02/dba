@@ -240,6 +240,51 @@ export const api = {
       withData,
     }),
 
+  renameTable: (
+    connectionId: string,
+    oldName: string,
+    newName: string,
+    database?: string,
+    schema?: string,
+    confirmedProduction = false
+  ) =>
+    invoke<void>("rename_table", {
+      connectionId,
+      database,
+      schema,
+      oldName,
+      newName,
+      confirmedProduction,
+    }),
+
+  createSchema: (
+    connectionId: string,
+    name: string,
+    database?: string,
+    confirmedProduction = false
+  ) =>
+    invoke<void>("create_schema", {
+      connectionId,
+      database,
+      name,
+      confirmedProduction,
+    }),
+
+  dropSchema: (
+    connectionId: string,
+    name: string,
+    confirmed: boolean,
+    database?: string,
+    cascade = false
+  ) =>
+    invoke<void>("drop_schema", {
+      connectionId,
+      database,
+      name,
+      cascade,
+      confirmed,
+    }),
+
   getObjectDdl: (
     connectionId: string,
     name: string,
@@ -289,6 +334,8 @@ export const api = {
   listSnippets: () => invoke<CodeSnippet[]>("list_snippets"),
   saveSnippet: (snippet: CodeSnippet) =>
     invoke<CodeSnippet[]>("save_snippet", { snippet }),
+  deleteSnippet: (id: string) =>
+    invoke<CodeSnippet[]>("delete_snippet", { id }),
 
   saveRecoveryState: (key: string, payload: string) =>
     invoke<void>("save_recovery_state", { key, payload }),

@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+pub type ProgressCallback = Arc<dyn Fn(DataJobProgress) + Send + Sync>;
+
 /// Built-in zero-dependency streaming SQL Dump (DDL + chunked multi-row INSERTs).
 pub async fn run_sql_dump(
     driver: Arc<dyn SqlDriver>,
@@ -16,9 +18,25 @@ pub async fn run_sql_dump(
     req: &SqlDumpRequest,
     job_id: String,
     cancel: Arc<AtomicBool>,
+    on_progress: Option<ProgressCallback>,
 ) -> Result<DataJobResult> {
     let start = Instant::now();
     let chunk_size = req.chunk_size.unwrap_or(250).clamp(1, 2000);
+    let total_tables = req.tables.len() as u64;
+
+    let emit_progress = |percent: f64, current_item: String, completed_items: u64, rows: u64| {
+        if let Some(ref cb) = on_progress {
+            cb(DataJobProgress {
+                job_id: job_id.clone(),
+                percent: percent.clamp(0.0, 100.0),
+                current_item,
+                completed_items,
+                total_items: total_tables,
+                rows_processed: rows,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+    };
 
     if let Some(parent) = Path::new(&req.output_path).parent() {
         if !parent.as_os_str().is_empty() {
@@ -41,11 +59,23 @@ pub async fn run_sql_dump(
     let mut cancelled = false;
     let mut errors = Vec::new();
 
-    for table in &req.tables {
+    for (idx, table) in req.tables.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
             cancelled = true;
             break;
         }
+
+        let base_pct = if total_tables > 0 {
+            (idx as f64 / total_tables as f64) * 100.0
+        } else {
+            0.0
+        };
+        let table_slice = if total_tables > 0 {
+            100.0 / total_tables as f64
+        } else {
+            100.0
+        };
+        emit_progress(base_pct, table.clone(), idx as u64, rows_processed);
 
         let fq = qualified_table(engine, req.schema.as_deref(), table);
         writeln!(w, "-- ------------------------------------------------------------")?;
@@ -75,6 +105,7 @@ pub async fn run_sql_dump(
         if req.include_data {
             let mut page = 1u64;
             let page_size = 1000u64;
+            let mut table_rows_done = 0u64;
             loop {
                 if cancel.load(Ordering::SeqCst) {
                     cancelled = true;
@@ -120,7 +151,24 @@ pub async fn run_sql_dump(
                         tuples.join(",\n  ")
                     )?;
                     rows_processed += batch.len() as u64;
+                    table_rows_done += batch.len() as u64;
                 }
+
+                let sub_frac = if let Some(total_r) = rs.total_count {
+                    if total_r > 0 {
+                        (table_rows_done as f64 / total_r as f64).min(0.99)
+                    } else {
+                        0.5
+                    }
+                } else {
+                    0.5
+                };
+                emit_progress(
+                    base_pct + table_slice * sub_frac,
+                    table.clone(),
+                    idx as u64,
+                    rows_processed,
+                );
 
                 if (rs.rows.len() as u64) < page_size {
                     break;
@@ -129,6 +177,13 @@ pub async fn run_sql_dump(
             }
             writeln!(w)?;
         }
+
+        emit_progress(
+            ((idx + 1) as f64 / total_tables.max(1) as f64) * 100.0,
+            table.clone(),
+            (idx + 1) as u64,
+            rows_processed,
+        );
     }
 
     w.flush()?;
@@ -161,10 +216,14 @@ pub async fn run_execute_sql_file(
     req: &ExecuteSqlFileRequest,
     job_id: String,
     cancel: Arc<AtomicBool>,
+    on_progress: Option<ProgressCallback>,
 ) -> Result<DataJobResult> {
     let start = Instant::now();
     let file = File::open(&req.file_path)?;
+    let total_bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
     let mut reader = BufReader::with_capacity(64 * 1024, file);
+    let mut bytes_processed = 0u64;
+    let mut last_emit = Instant::now();
 
     let mut current = String::new();
     let mut in_single = false;
@@ -178,6 +237,18 @@ pub async fn run_execute_sql_file(
     let mut errors = Vec::new();
     let mut line_buf = String::new();
 
+    if let Some(ref cb) = on_progress {
+        cb(DataJobProgress {
+            job_id: job_id.clone(),
+            percent: 0.0,
+            current_item: "Starting SQL file execution...".into(),
+            completed_items: 0,
+            total_items: total_bytes,
+            rows_processed: 0,
+            elapsed_ms: 0,
+        });
+    }
+
     loop {
         if cancel.load(Ordering::SeqCst) {
             cancelled = true;
@@ -187,6 +258,26 @@ pub async fn run_execute_sql_file(
         let bytes_read = reader.read_line(&mut line_buf)?;
         if bytes_read == 0 {
             break;
+        }
+        bytes_processed += bytes_read as u64;
+        if let Some(ref cb) = on_progress {
+            if last_emit.elapsed().as_millis() >= 120 {
+                last_emit = Instant::now();
+                let pct = if total_bytes > 0 {
+                    ((bytes_processed as f64 / total_bytes as f64) * 100.0).min(99.5)
+                } else {
+                    0.0
+                };
+                cb(DataJobProgress {
+                    job_id: job_id.clone(),
+                    percent: pct,
+                    current_item: format!("Executed {} statement(s)", executed),
+                    completed_items: bytes_processed,
+                    total_items: total_bytes,
+                    rows_processed: executed,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                });
+            }
         }
 
         let chars: Vec<char> = line_buf.chars().collect();

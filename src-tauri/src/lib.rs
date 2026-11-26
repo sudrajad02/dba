@@ -3,7 +3,7 @@ use dba_core::drivers::uri::parse_connection_uri;
 use dba_core::error::SerializableError;
 use dba_core::*;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 pub struct AppState {
     pub manager: Arc<ConnectionManager>,
@@ -394,6 +394,72 @@ async fn duplicate_table(
 }
 
 #[tauri::command]
+async fn rename_table(
+    state: State<'_, AppState>,
+    connection_id: String,
+    database: Option<String>,
+    schema: Option<String>,
+    old_name: String,
+    new_name: String,
+    confirmed_production: Option<bool>,
+) -> CmdResult<()> {
+    state
+        .manager
+        .rename_table(
+            &connection_id,
+            database.as_deref(),
+            schema.as_deref(),
+            &old_name,
+            &new_name,
+            confirmed_production.unwrap_or(false),
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn create_schema(
+    state: State<'_, AppState>,
+    connection_id: String,
+    database: Option<String>,
+    name: String,
+    confirmed_production: Option<bool>,
+) -> CmdResult<()> {
+    state
+        .manager
+        .create_schema(
+            &connection_id,
+            database.as_deref(),
+            &name,
+            confirmed_production.unwrap_or(false),
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn drop_schema(
+    state: State<'_, AppState>,
+    connection_id: String,
+    database: Option<String>,
+    name: String,
+    cascade: Option<bool>,
+    confirmed: bool,
+) -> CmdResult<()> {
+    state
+        .manager
+        .drop_schema(
+            &connection_id,
+            database.as_deref(),
+            &name,
+            cascade.unwrap_or(false),
+            confirmed,
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 async fn get_object_ddl(
     state: State<'_, AppState>,
     connection_id: String,
@@ -496,6 +562,11 @@ fn list_snippets(state: State<'_, AppState>) -> CmdResult<Vec<CodeSnippet>> {
 #[tauri::command]
 fn save_snippet(state: State<'_, AppState>, snippet: CodeSnippet) -> CmdResult<Vec<CodeSnippet>> {
     state.storage.save_snippet(snippet).map_err(Into::into)
+}
+
+#[tauri::command]
+fn delete_snippet(state: State<'_, AppState>, id: String) -> CmdResult<Vec<CodeSnippet>> {
+    state.storage.delete_snippet(&id).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -676,20 +747,32 @@ async fn import_table_data(
 
 #[tauri::command]
 async fn dump_sql(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: SqlDumpRequest,
 ) -> CmdResult<DataJobResult> {
-    state.manager.dump_sql(&request).await.map_err(Into::into)
+    let cb: dba_core::engines::dump::ProgressCallback = Arc::new(move |progress| {
+        let _ = app.emit("data-job-progress", progress);
+    });
+    state
+        .manager
+        .dump_sql_with_progress(&request, Some(cb))
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
 async fn execute_sql_file(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: ExecuteSqlFileRequest,
 ) -> CmdResult<DataJobResult> {
+    let cb: dba_core::engines::dump::ProgressCallback = Arc::new(move |progress| {
+        let _ = app.emit("data-job-progress", progress);
+    });
     state
         .manager
-        .execute_sql_file(&request)
+        .execute_sql_file_with_progress(&request, Some(cb))
         .await
         .map_err(Into::into)
 }
@@ -1060,6 +1143,9 @@ pub fn run() {
             create_database,
             drop_database,
             duplicate_table,
+            rename_table,
+            create_schema,
+            drop_schema,
             get_object_ddl,
             search_query_history,
             list_saved_queries,
@@ -1069,6 +1155,7 @@ pub fn run() {
             delete_saved_query,
             list_snippets,
             save_snippet,
+            delete_snippet,
             save_recovery_state,
             load_recovery_state,
             mongo_get_collection_metadata,

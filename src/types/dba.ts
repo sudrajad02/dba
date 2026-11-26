@@ -520,6 +520,16 @@ export interface DataJobResult {
   errors: string[];
 }
 
+export interface DataJobProgress {
+  jobId: string;
+  percent: number;
+  currentItem: string;
+  completedItems: number;
+  totalItems: number;
+  rowsProcessed: number;
+  elapsedMs: number;
+}
+
 export interface DataJobProfile {
   id: string;
   name: string;

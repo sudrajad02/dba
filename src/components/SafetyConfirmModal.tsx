@@ -9,7 +9,7 @@ export const SafetyConfirmModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/65  flex items-center justify-center p-4">
-      <div className="w-full max-w-lg rounded-md border border-red-500/40 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+      <div className="w-full max-w-lg rounded-md border border-red-500/40 bg-[var(--surface-panel)] shadow-2xl overflow-hidden">
         <div className="px-4 py-3 bg-red-600/15 border-b border-red-500/30 flex items-center justify-between">
           <div className="flex items-center gap-2 text-red-400 font-semibold text-sm">
             <ShieldAlert className="w-4 h-4" />
@@ -34,13 +34,13 @@ export const SafetyConfirmModal: React.FC = () => {
             <div className="text-[0.8rem] font-medium text-zinc-500 mb-1">
               SQL Statement(s) to Execute:
             </div>
-            <pre className="p-3 rounded-lg bg-zinc-950 text-zinc-100 font-mono text-[0.8rem] max-h-56 overflow-auto border border-zinc-800 whitespace-pre-wrap">
+            <pre className="p-3 rounded-lg bg-[#1e1f22] text-zinc-100 font-mono text-[0.8rem] max-h-56 overflow-auto border border-zinc-800 whitespace-pre-wrap">
               {safetyModal.sqlPreview}
             </pre>
           </div>
         </div>
 
-        <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
+        <div className="px-4 py-3 border-t border-[var(--border-subtle)] flex justify-end gap-2">
           <button
             onClick={closeSafetyModal}
             className="h-8 px-3.5 rounded-md text-xs font-medium bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700"

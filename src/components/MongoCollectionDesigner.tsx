@@ -121,8 +121,8 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
   };
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
-      <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex items-center justify-between">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
+      <div className="px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-mono font-semibold text-emerald-400">
             {database}.{collection}
@@ -139,7 +139,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
               className={`h-7 px-2.5 rounded flex items-center gap-1.5 ${
                 section === "indexes"
                   ? "bg-emerald-600 text-white font-medium"
-                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "text-zinc-500 hover:bg-[var(--surface-hover)]"
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" /> Indexes ({meta?.indexes.length ?? 0})
@@ -149,7 +149,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
               className={`h-7 px-2.5 rounded flex items-center gap-1.5 ${
                 section === "validation"
                   ? "bg-emerald-600 text-white font-medium"
-                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "text-zinc-500 hover:bg-[var(--surface-hover)]"
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5" /> JSON Schema Validation
@@ -158,7 +158,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
         </div>
         <button
           onClick={loadMeta}
-          className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+          className="h-7 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
@@ -175,7 +175,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
           <>
             <table className="w-full border-collapse text-left">
               <thead>
-                <tr className="border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
+                <tr className="border-b border-[var(--border-subtle)] text-zinc-500">
                   <th className="py-1.5 px-2">Index Name</th>
                   <th className="py-1.5 px-2">Keys</th>
                   <th className="py-1.5 px-2">Flags</th>
@@ -187,7 +187,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
                 {meta?.indexes.map((idx) => (
                   <tr
                     key={idx.name}
-                    className="border-b border-zinc-200/60 dark:border-zinc-800/60"
+                    className="border-b border-[var(--border-subtle)]"
                   >
                     <td className="py-1.5 px-2 font-mono font-medium">{idx.name}</td>
                     <td className="py-1.5 px-2 font-mono text-emerald-400">
@@ -225,20 +225,20 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
             </table>
 
             {/* Create Index Panel */}
-            <div className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 space-y-2.5 max-w-2xl">
+            <div className="p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)]/50 space-y-2.5 max-w-2xl">
               <div className="font-semibold">Create New Index</div>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   value={idxName}
                   onChange={(e) => setIdxName(e.target.value)}
                   placeholder="Index name (optional)"
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={idxKeys}
                   onChange={(e) => setIdxKeys(e.target.value)}
                   placeholder='{ "email": 1 }'
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -246,13 +246,13 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
                   value={idxTtl}
                   onChange={(e) => setIdxTtl(e.target.value)}
                   placeholder="TTL expireAfterSeconds (optional)"
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
                 <input
                   value={idxPartial}
                   onChange={(e) => setIdxPartial(e.target.value)}
                   placeholder='Partial Filter JSON (optional)'
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
                 />
               </div>
               <div className="flex items-center justify-between pt-1">
@@ -291,7 +291,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
                 <select
                   value={validationLevel}
                   onChange={(e) => setValidationLevel(e.target.value)}
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700"
+                  className="h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)]"
                 >
                   <option value="off">off</option>
                   <option value="moderate">moderate</option>
@@ -303,7 +303,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
                 <select
                   value={validationAction}
                   onChange={(e) => setValidationAction(e.target.value)}
-                  className="h-7 px-2 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700"
+                  className="h-7 px-2 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)]"
                 >
                   <option value="error">error</option>
                   <option value="warn">warn</option>
@@ -317,7 +317,7 @@ export const MongoCollectionDesigner: React.FC<{ tab: WorkbenchTab }> = ({ tab }
                 value={validatorJson}
                 onChange={(e) => setValidatorJson(e.target.value)}
                 rows={14}
-                className="w-full p-3 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 font-mono text-xs"
+                className="w-full p-3 rounded bg-[var(--surface-panel)] border border-[var(--border-strong)] font-mono text-xs"
               />
             </div>
 

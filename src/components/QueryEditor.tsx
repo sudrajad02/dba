@@ -37,7 +37,7 @@ const ExplainTreeNode: React.FC<{ node: ExplainNode; depth?: number }> = ({
       className={`p-2 rounded-lg border text-xs ${
         node.isFullScan
           ? "border-amber-500/50 bg-amber-500/10"
-          : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900"
+          : "border-[var(--border-subtle)] bg-[var(--surface-panel)]"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -103,7 +103,13 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   const [saveModalMode, setSaveModalMode] = useState<"save" | "save_as" | null>(null);
   const [schemaRefreshing, setSchemaRefreshing] = useState(false);
   const [schemaTableCount, setSchemaTableCount] = useState(0);
+  const [editorHeightPct, setEditorHeightPct] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("dv_query_editor_split_pct"));
+    return Number.isFinite(saved) && saved >= 20 && saved <= 80 ? saved : 46;
+  });
+  const [colWidths, setColWidths] = useState<Record<number, number>>({});
 
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const modelUriRef = useRef<string | null>(null);
   const schemaCacheRef = useRef<Record<string, string[]>>({});
@@ -562,12 +568,137 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     };
   }, []);
 
+  // Keep-Alive Monaco Layout Sync when tab becomes active
+  useEffect(() => {
+    if (activeTabId === tab.id) {
+      const raf = window.requestAnimationFrame(() => {
+        editorRef.current?.layout();
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+  }, [activeTabId, tab.id]);
+
+  // Listen for Classic Menu Bar actions (File -> Save/Save As, Edit -> Format SQL)
+  // and RightInspector Snippets "Insert at Cursor"
+  useEffect(() => {
+    if (activeTabId !== tab.id) return;
+    const onMenuAction = (e: Event) => {
+      const action = (e as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === "save") actionsRef.current.handleSaveQuery();
+      else if (action === "save_as") handleSaveAs();
+      else if (action === "format_sql") actionsRef.current.handleBeautify();
+    };
+    const onInsertSnippet = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (!text) return;
+      const editor = editorRef.current;
+      if (!editor) return;
+      const selection = editor.getSelection();
+      if (selection) {
+        editor.executeEdits("snippet-insert", [
+          { range: selection, text, forceMoveMarkers: true },
+        ]);
+      } else {
+        const model = editor.getModel();
+        if (model) {
+          const lastLine = model.getLineCount();
+          const lastCol = model.getLineMaxColumn(lastLine);
+          editor.executeEdits("snippet-insert", [
+            {
+              range: {
+                startLineNumber: lastLine,
+                startColumn: lastCol,
+                endLineNumber: lastLine,
+                endColumn: lastCol,
+              },
+              text: `\n${text}`,
+              forceMoveMarkers: true,
+            },
+          ]);
+        }
+      }
+      editor.focus();
+    };
+    window.addEventListener("dba:menu-action", onMenuAction);
+    window.addEventListener("dba:insert-snippet", onInsertSnippet);
+    return () => {
+      window.removeEventListener("dba:menu-action", onMenuAction);
+      window.removeEventListener("dba:insert-snippet", onInsertSnippet);
+    };
+  }, [activeTabId, tab.id, handleSaveAs]);
+
+  const startEditorSplitResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      const pct = Math.max(20, Math.min(80, ((ev.clientY - rect.top) / rect.height) * 100));
+      const rounded = Math.round(pct * 10) / 10;
+      setEditorHeightPct(rounded);
+      localStorage.setItem("dv_query_editor_split_pct", String(rounded));
+      window.requestAnimationFrame(() => editorRef.current?.layout());
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const startResultColResize = (e: React.PointerEvent<HTMLDivElement>, colIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.currentTarget as HTMLElement).parentElement;
+    const startX = e.clientX;
+    const startW = colWidths[colIdx] ?? th?.getBoundingClientRect().width ?? 140;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      const nextW = Math.max(60, Math.min(720, Math.round(startW + (ev.clientX - startX))));
+      setColWidths((prev) => ({ ...prev, [colIdx]: nextW }));
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const autoFitResultCol = (colIdx: number) => {
+    if (!currentResult) return;
+    const col = currentResult.columns[colIdx];
+    let maxLen = (col?.name.length ?? 4) + (col?.dataType.length ?? 0) + 2;
+    const sampleRows = currentResult.rows.slice(0, 100);
+    for (const row of sampleRows) {
+      const val = row[colIdx];
+      const str = val === null || val === undefined ? "NULL" : typeof val === "object" ? JSON.stringify(val) : String(val);
+      if (str.length > maxLen) maxLen = str.length;
+    }
+    const fitted = Math.max(72, Math.min(480, maxLen * 7.5 + 28));
+    setColWidths((prev) => ({ ...prev, [colIdx]: Math.round(fitted) }));
+  };
+
   const currentResult = response?.resultSets[activeResultTab];
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-zinc-950 text-xs">
+    <div className="h-full flex flex-col bg-[var(--surface-canvas)] text-xs">
       {/* Query Toolbar */}
-      <div className="px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-2.5 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1.5">
           {running ? (
             <button
@@ -601,7 +732,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             onClick={handleExplain}
             disabled={running}
             title="Visual Explain Plan (EXPLAIN ANALYZE)"
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1.5"
           >
             <Activity className="w-3.5 h-3.5 text-amber-400" />
             Explain
@@ -610,7 +741,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             onClick={handleBeautify}
             title="Beautify / Format SQL (Ctrl+Shift+F)"
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1.5"
           >
             <AlignLeft className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
             Format
@@ -623,7 +754,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 ? "Save Query (Ctrl+S)"
                 : "Save Query to Workspace (Ctrl+S)"
             }
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
             Save
@@ -632,7 +763,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <button
             onClick={handleSaveAs}
             title="Save a Copy As..."
-            className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1.5"
+            className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1.5"
           >
             <SaveAll className="w-3.5 h-3.5" />
             Save As
@@ -647,7 +778,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               setConnId(e.target.value);
               updateTab(tab.id, { connectionId: e.target.value });
             }}
-            className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+            className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
           >
             <option value="">Connection...</option>
             {connections.map((c) => (
@@ -663,7 +794,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               setDatabase(e.target.value);
               updateTab(tab.id, { database: e.target.value });
             }}
-            className="h-7 px-2 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700"
+            className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)]"
           >
             <option value="">Default DB</option>
             {dbs.map((db) => (
@@ -677,15 +808,20 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             onClick={() => refreshAutocompleteSchema(true)}
             disabled={!connId || !connectedIds.has(connId) || schemaRefreshing}
             title={`Refresh Autocomplete Schema (${schemaTableCount} tables/views)`}
-            className="h-7 px-2 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-40 flex items-center gap-1 text-zinc-600 dark:text-zinc-300"
+            className="h-7 px-2 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] disabled:opacity-40 flex items-center gap-1 text-zinc-600 dark:text-zinc-300"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${schemaRefreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
+      {/* Split Container: Monaco SQL Editor + Result / Explain Pane */}
+      <div ref={splitContainerRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Monaco SQL Editor */}
-      <div className="h-[46%] min-h-[160px] border-b border-zinc-200 dark:border-zinc-800">
+      <div
+        style={{ height: `${editorHeightPct}%` }}
+        className="min-h-[120px] shrink-0"
+      >
         <Editor
           height="100%"
           defaultLanguage="sql"
@@ -700,7 +836,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           onMount={handleEditorMount}
           options={{
             minimap: { enabled: false },
-            fontSize: Math.max(13, Math.round(uiFontSize * 0.85)),
+            fontSize: Math.max(12, Math.round(uiFontSize * 0.92)),
             fontFamily: "JetBrains Mono, Fira Code, monospace",
             lineNumbersMinChars: 3,
             scrollBeyondLastLine: false,
@@ -714,10 +850,18 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         />
       </div>
 
+      {/* Vertical Resize Splitter */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        onPointerDown={startEditorSplitResize}
+        className="h-1 shrink-0 cursor-row-resize bg-[var(--border-subtle)] hover:bg-indigo-500/70 active:bg-indigo-500 transition-colors"
+      />
+
       {/* Result / Explain Pane */}
       <div className="flex-1 flex flex-col min-h-0">
         {/* Sub-tabs */}
-        <div className="px-2.5 h-8 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 flex items-center gap-1.5 overflow-x-auto">
+        <div className="px-2.5 h-8 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-center gap-1.5 overflow-x-auto">
           {response?.resultSets.map((rs, idx) => (
             <button
               key={idx}
@@ -728,7 +872,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-6 px-2.5 rounded text-[0.8rem] flex items-center gap-1.5 shrink-0 ${
                 resultView === "results" && activeResultTab === idx
                   ? "bg-indigo-600 text-white font-medium"
-                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "text-zinc-500 hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Table2 className="w-3 h-3" />
@@ -743,7 +887,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-6 px-2.5 rounded text-[0.8rem] flex items-center gap-1.5 shrink-0 ${
                 resultView === "explain"
                   ? "bg-amber-600 text-white font-medium"
-                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "text-zinc-500 hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Activity className="w-3 h-3" />
@@ -769,7 +913,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               {explainPlan.root ? (
                 <ExplainTreeNode node={explainPlan.root} />
               ) : (
-                <pre className="p-3 rounded bg-zinc-900 font-mono text-[0.8rem] overflow-auto">
+                <pre className="p-3 rounded bg-[var(--surface-panel)] font-mono text-[0.8rem] overflow-auto">
                   {JSON.stringify(explainPlan.rawJson, null, 2)}
                 </pre>
               )}
@@ -777,20 +921,36 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           ) : currentResult ? (
             currentResult.columns.length > 0 ? (
               <table className="w-max min-w-full border-collapse text-left">
-                <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
+                <thead className="sticky top-0 bg-[var(--surface-panel)] border-b border-[var(--border-subtle)]">
                   <tr>
-                    <th className="w-10 px-2 py-1 text-[0.72rem] text-zinc-500 border-r border-zinc-200 dark:border-zinc-800">
+                    <th className="w-10 px-2 py-1 text-[0.72rem] text-zinc-500 border-r border-[var(--border-subtle)]">
                       #
                     </th>
                     {currentResult.columns.map((c, idx) => (
                       <th
                         key={idx}
-                        className="px-2.5 py-1 font-semibold border-r border-zinc-200 dark:border-zinc-800 whitespace-nowrap"
+                        style={
+                          colWidths[idx]
+                            ? { width: colWidths[idx], minWidth: colWidths[idx], maxWidth: colWidths[idx] }
+                            : undefined
+                        }
+                        className="relative px-2.5 py-1 font-semibold border-r border-[var(--border-subtle)] whitespace-nowrap"
                       >
-                        {c.name}{" "}
-                        <span className="text-[0.72rem] font-normal text-zinc-500">
-                          {c.dataType}
-                        </span>
+                        <div className="truncate pr-1.5">
+                          {c.name}{" "}
+                          <span className="text-[0.72rem] font-normal text-zinc-500">
+                            {c.dataType}
+                          </span>
+                        </div>
+                        <div
+                          onPointerDown={(e) => startResultColResize(e, idx)}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            autoFitResultCol(idx);
+                          }}
+                          title="Drag to resize • Double-click to auto-fit"
+                          className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-indigo-500/60"
+                        />
                       </th>
                     ))}
                   </tr>
@@ -799,14 +959,19 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   {currentResult.rows.map((row, rIdx) => (
                     <tr
                       key={rIdx}
-                      className="border-b border-zinc-200/60 dark:border-zinc-800/60 hover:bg-zinc-100/70 dark:hover:bg-zinc-100 dark:bg-zinc-900"
+                      className="h-[26px] border-b border-[var(--border-subtle)]/60 hover:bg-[var(--surface-hover)]"
                     >
-                      <td className="px-2 py-1 text-[0.72rem] text-zinc-500 border-r border-zinc-200 dark:border-zinc-800 font-mono">
+                      <td className="px-2 py-0.5 text-[0.72rem] text-zinc-500 border-r border-[var(--border-subtle)] font-mono">
                         {rIdx + 1}
                       </td>
                       {row.map((cell, cIdx) => (
                         <td
                           key={cIdx}
+                          style={
+                            colWidths[cIdx]
+                              ? { width: colWidths[cIdx], minWidth: colWidths[cIdx], maxWidth: colWidths[cIdx] }
+                              : undefined
+                          }
                           onClick={() =>
                             setInspectedCell({
                               column: currentResult.columns[cIdx]?.name ?? "",
@@ -814,7 +979,9 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                               value: cell,
                             })
                           }
-                          className="px-2.5 py-1 border-r border-zinc-200/60 dark:border-zinc-800/60 font-mono max-w-[320px] truncate cursor-pointer"
+                          className={`px-2.5 py-0.5 border-r border-[var(--border-subtle)]/60 font-mono truncate cursor-pointer ${
+                            colWidths[cIdx] ? "" : "max-w-[320px]"
+                          }`}
                         >
                           {cell === null || cell === undefined ? (
                             <span className="text-zinc-500 italic">NULL</span>
@@ -841,6 +1008,7 @@ export const QueryEditor: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
             </div>
           )}
         </div>
+      </div>
       </div>
 
       <SaveQueryModal

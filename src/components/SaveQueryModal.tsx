@@ -129,9 +129,9 @@ export const SaveQueryModal: React.FC<SaveQueryModalProps> = ({
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden text-xs"
+        className="w-full max-w-md rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden text-xs"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
           <div className="flex items-center gap-2">
             <FileCode2 className="w-4 h-4 text-emerald-500" />
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
@@ -142,7 +142,7 @@ export const SaveQueryModal: React.FC<SaveQueryModalProps> = ({
             type="button"
             disabled={submitting}
             onClick={onClose}
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+            className="p-1 rounded hover:bg-[var(--surface-hover)] text-zinc-500"
           >
             <X className="w-4 h-4" />
           </button>
@@ -150,7 +150,7 @@ export const SaveQueryModal: React.FC<SaveQueryModalProps> = ({
 
         <div className="p-4 space-y-3">
           {/* Location preview */}
-          <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400">
+          <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[var(--surface-canvas)] border border-[var(--border-subtle)] text-zinc-600 dark:text-zinc-400">
             <Folder className="w-3.5 h-3.5 text-sky-500 shrink-0" />
             <span className="truncate font-medium">{locationLabel}</span>
           </div>
@@ -167,9 +167,9 @@ export const SaveQueryModal: React.FC<SaveQueryModalProps> = ({
                   setConfirmOverwrite(false);
                 }}
                 placeholder={extension === ".mongodb.json" ? "active_users" : "report_monthly"}
-                className="flex-1 h-8 px-2.5 rounded-l bg-zinc-50 dark:bg-zinc-950 border border-r-0 border-zinc-300 dark:border-zinc-700 font-mono focus:outline-none focus:border-indigo-500"
+                className="flex-1 h-8 px-2.5 rounded-l bg-[var(--surface-canvas)] border border-r-0 border-[var(--border-strong)] font-mono focus:outline-none focus:border-indigo-500"
               />
-              <span className="h-8 px-2.5 flex items-center rounded-r bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 font-mono text-zinc-500">
+              <span className="h-8 px-2.5 flex items-center rounded-r bg-zinc-100 dark:bg-zinc-800 border border-[var(--border-strong)] font-mono text-zinc-500">
                 {extension}
               </span>
             </div>
@@ -194,12 +194,12 @@ export const SaveQueryModal: React.FC<SaveQueryModalProps> = ({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/40">
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[var(--border-subtle)] bg-[var(--surface-elevated)]">
           <button
             type="button"
             disabled={submitting}
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className="px-3 py-1.5 rounded-lg border border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
           >
             Cancel
           </button>

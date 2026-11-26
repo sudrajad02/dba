@@ -125,6 +125,10 @@ impl StorageManager {
         self.workspace.save_snippet(snippet)
     }
 
+    pub fn delete_snippet(&self, id: &str) -> Result<Vec<CodeSnippet>> {
+        self.workspace.delete_snippet(id)
+    }
+
     pub fn save_recovery_state(&self, key: &str, payload: &str) -> Result<()> {
         let db = self.db.lock().unwrap();
         db.set_app_state(key, payload)

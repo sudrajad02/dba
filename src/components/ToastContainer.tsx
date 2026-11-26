@@ -18,7 +18,7 @@ export const ToastContainer: React.FC = () => {
             ? "border-amber-500/40 bg-amber-950/95 text-amber-100"
             : t.level === "success"
             ? "border-emerald-500/40 bg-emerald-950/95 text-emerald-100"
-            : "border-zinc-700 bg-zinc-900/95 text-zinc-100";
+            : "border-[var(--border-strong)] bg-[var(--surface-elevated)] text-zinc-900 dark:text-zinc-100";
 
         return (
           <div

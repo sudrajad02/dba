@@ -729,7 +729,7 @@ export const ChartDashboardBuilder: React.FC<{ tab: WorkbenchTab }> = ({ tab }) 
                 rows={5}
                 value={editingChart.sql}
                 onChange={(e) => updateChart(editingChart.id, { sql: e.target.value })}
-                className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-zinc-950 text-emerald-300 font-mono text-[0.72rem]"
+                className="w-full p-2 rounded border border-zinc-300 dark:border-[#3b3d44] bg-[#1e1f22] text-emerald-300 font-mono text-[0.72rem]"
               />
             </div>
 

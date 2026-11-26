@@ -6,6 +6,7 @@ export const BottomDrawer: React.FC = () => {
   const {
     bottomDrawerOpen,
     bottomDrawerTab,
+    bottomDrawerHeight,
     setBottomDrawerTab,
     toggleBottomDrawer,
     consoleLogs,
@@ -20,8 +21,11 @@ export const BottomDrawer: React.FC = () => {
   if (!bottomDrawerOpen) return null;
 
   return (
-    <div className="h-52 shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 flex flex-col text-xs">
-      <div className="h-8 px-2.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+    <div
+      style={{ height: bottomDrawerHeight }}
+      className="shrink-0 border-t border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-col text-xs"
+    >
+      <div className="h-8 px-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setBottomDrawerTab("console")}
@@ -61,7 +65,7 @@ export const BottomDrawer: React.FC = () => {
                   refreshHistory(e.target.value);
                 }}
                 placeholder="Search history..."
-                className="h-6 pl-6 pr-2 w-48 rounded bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 text-[0.8rem]"
+                className="h-6 pl-6 pr-2 w-48 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] text-[0.8rem]"
               />
             </div>
           )}
@@ -123,7 +127,7 @@ export const BottomDrawer: React.FC = () => {
                     sql: h.sql,
                   })
                 }
-                className="px-2 py-1.5 rounded hover:bg-zinc-200/70 dark:hover:bg-zinc-800 cursor-pointer flex items-center justify-between gap-3"
+                className="px-2 py-1.5 rounded hover:bg-[var(--surface-hover)] cursor-pointer flex items-center justify-between gap-3"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span

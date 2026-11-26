@@ -509,6 +509,95 @@ impl ConnectionManager {
             .await
     }
 
+    pub async fn rename_table(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+        confirmed_production: bool,
+    ) -> Result<()> {
+        let old_trimmed = old_name.trim();
+        let new_trimmed = new_name.trim();
+        if old_trimmed.is_empty() || new_trimmed.is_empty() {
+            return Err(DbaError::Database {
+                message: "Table name cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
+        }
+        if matches!(profile.environment, EnvironmentTag::Production) && !confirmed_production {
+            return Err(DbaError::SafetyGuardBlocked(
+                "Confirmation required to rename table on PRODUCTION".into(),
+            ));
+        }
+        drv.rename_table(database, schema, old_trimmed, new_trimmed)
+            .await
+    }
+
+    pub async fn create_schema(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        name: &str,
+        confirmed_production: bool,
+    ) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(DbaError::Database {
+                message: "Schema name cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
+        }
+        if matches!(profile.environment, EnvironmentTag::Production) && !confirmed_production {
+            return Err(DbaError::SafetyGuardBlocked(
+                "Confirmation required to create schema on PRODUCTION".into(),
+            ));
+        }
+        drv.create_schema(database, trimmed).await
+    }
+
+    pub async fn drop_schema(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        name: &str,
+        cascade: bool,
+        confirmed: bool,
+    ) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(DbaError::Database {
+                message: "Schema name cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked("Read-only mode enabled".into()));
+        }
+        if !confirmed {
+            return Err(DbaError::SafetyGuardBlocked(
+                "Confirmation required for DROP SCHEMA".into(),
+            ));
+        }
+        drv.drop_schema(database, trimmed, cascade).await
+    }
+
     pub async fn get_object_ddl(
         &self,
         connection_id: &str,
@@ -786,6 +875,14 @@ impl ConnectionManager {
     }
 
     pub async fn dump_sql(&self, req: &SqlDumpRequest) -> Result<DataJobResult> {
+        self.dump_sql_with_progress(req, None).await
+    }
+
+    pub async fn dump_sql_with_progress(
+        &self,
+        req: &SqlDumpRequest,
+        on_progress: Option<dump::ProgressCallback>,
+    ) -> Result<DataJobResult> {
         let (profile, drv) = self.get_active(&req.connection_id).await?;
         let job_id = req
             .job_id
@@ -793,12 +890,21 @@ impl ConnectionManager {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let cancel = self.job_cancels.register(&job_id);
-        let res = dump::run_sql_dump(drv, profile.engine, req, job_id.clone(), cancel).await;
+        let res = dump::run_sql_dump(drv, profile.engine, req, job_id.clone(), cancel, on_progress)
+            .await;
         self.job_cancels.unregister(&job_id);
         res
     }
 
     pub async fn execute_sql_file(&self, req: &ExecuteSqlFileRequest) -> Result<DataJobResult> {
+        self.execute_sql_file_with_progress(req, None).await
+    }
+
+    pub async fn execute_sql_file_with_progress(
+        &self,
+        req: &ExecuteSqlFileRequest,
+        on_progress: Option<dump::ProgressCallback>,
+    ) -> Result<DataJobResult> {
         let (profile, drv) = self.get_active(&req.connection_id).await?;
         if profile.read_only {
             return Err(DbaError::ReadOnlyBlocked(
@@ -816,7 +922,7 @@ impl ConnectionManager {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let cancel = self.job_cancels.register(&job_id);
-        let res = dump::run_execute_sql_file(drv, req, job_id.clone(), cancel).await;
+        let res = dump::run_execute_sql_file(drv, req, job_id.clone(), cancel, on_progress).await;
         self.job_cancels.unregister(&job_id);
         res
     }

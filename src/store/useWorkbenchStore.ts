@@ -5,6 +5,7 @@ import type {
   ConnectionProfile,
   DatabaseInfo,
   DatabaseObject,
+  DbEngine,
   FilterCondition,
   QueryHistoryEntry,
   SavedQuery,
@@ -36,7 +37,7 @@ export interface BrowserContext {
   connectionId: string | null;
   database: string | null;
   schema: string | null;
-  category: "all" | "table" | "view" | "function" | "query";
+  category: "all" | "table" | "view" | "function" | "trigger" | "query";
 }
 
 export interface CopiedDbObject {
@@ -85,11 +86,28 @@ export interface InspectedCell {
   value: unknown;
 }
 
+export interface InspectedObjectInfo {
+  connectionId: string;
+  database: string;
+  schema?: string | null;
+  object: DatabaseObject;
+  tableMeta?: TableMetadata | null;
+  ddl?: string | null;
+  loading?: boolean;
+}
+
 export interface SafetyModalState {
   open: boolean;
   title: string;
   warnings: string[];
   sqlPreview: string;
+  onConfirm: () => void;
+}
+
+export interface UnsavedCloseModalState {
+  title: string;
+  message: string;
+  dirtyTabTitles: string[];
   onConfirm: () => void;
 }
 
@@ -103,6 +121,12 @@ interface WorkbenchStore {
   rightInspectorOpen: boolean;
   bottomDrawerOpen: boolean;
   bottomDrawerTab: "console" | "history";
+  leftSidebarWidth: number;
+  rightInspectorWidth: number;
+  bottomDrawerHeight: number;
+  setLeftSidebarWidth: (px: number) => void;
+  setRightInspectorWidth: (px: number) => void;
+  setBottomDrawerHeight: (px: number) => void;
   splitMode: SplitMode;
   toggleLeftSidebar: () => void;
   toggleRightInspector: () => void;
@@ -135,10 +159,14 @@ interface WorkbenchStore {
   secondaryTabId: string | null;
   openTab: (tab: Omit<WorkbenchTab, "id"> & { id?: string }) => string;
   closeTab: (id: string) => void;
+  requestCloseTab: (id: string) => void;
   reorderTabs: (fromId: string, toIndex: number) => void;
   closeOtherTabs: (keepId: string) => void;
+  requestCloseOtherTabs: (keepId: string) => void;
   closeTabsToRight: (id: string) => void;
+  requestCloseTabsToRight: (id: string) => void;
   closeAllTabs: () => void;
+  requestCloseAllTabs: () => void;
   setActiveTab: (id: string) => void;
   setSecondaryTab: (id: string | null) => void;
   updateTab: (id: string, patch: Partial<WorkbenchTab>) => void;
@@ -148,6 +176,14 @@ interface WorkbenchStore {
   setInspectedCell: (cell: InspectedCell | null) => void;
   inspectedTableMeta: TableMetadata | null;
   setInspectedTableMeta: (meta: TableMetadata | null) => void;
+  inspectedObject: InspectedObjectInfo | null;
+  setInspectedObject: (info: InspectedObjectInfo | null) => void;
+  inspectDatabaseObject: (
+    connectionId: string,
+    database: string,
+    schema: string | null | undefined,
+    object: DatabaseObject
+  ) => Promise<void>;
   consoleLogs: ConsoleLogEntry[];
   toasts: ConsoleLogEntry[];
   addLog: (
@@ -170,7 +206,11 @@ interface WorkbenchStore {
   // Modals
   connectionModalOpen: boolean;
   editingConnection: ConnectionProfile | null;
-  openConnectionModal: (profile?: ConnectionProfile | null) => void;
+  initialConnectionEngine: DbEngine | null;
+  openConnectionModal: (
+    profile?: ConnectionProfile | null,
+    initialEngine?: DbEngine | null
+  ) => void;
   closeConnectionModal: () => void;
 
   commandPaletteOpen: boolean;
@@ -179,6 +219,9 @@ interface WorkbenchStore {
   safetyModal: SafetyModalState | null;
   openSafetyModal: (modal: Omit<SafetyModalState, "open">) => void;
   closeSafetyModal: () => void;
+
+  unsavedCloseModal: UnsavedCloseModalState | null;
+  closeUnsavedCloseModal: () => void;
 
   // Async Actions
   bootstrap: () => Promise<void>;
@@ -200,26 +243,72 @@ const makeId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const readClampedNumber = (key: string, fallback: number, min: number, max: number): number => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  } catch {
+    return fallback;
+  }
+};
+
+const readBool = (key: string, fallback: boolean): boolean => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === "true";
+  } catch {
+    return fallback;
+  }
+};
+
+let persistRecoveryTimer: number | null = null;
+
 export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   theme: (localStorage.getItem("dv_theme") as ThemeMode) || "dark",
   setTheme: (theme) => {
     localStorage.setItem("dv_theme", theme);
     set({ theme });
   },
-  uiFontSize: Number(localStorage.getItem("dv_font_size")) || 18,
+  uiFontSize: readClampedNumber("dv_font_size", 14, 12, 22),
   setUiFontSize: (px) => {
-    const clamped = Math.max(14, Math.min(24, px));
+    const clamped = Math.max(12, Math.min(22, px));
     localStorage.setItem("dv_font_size", String(clamped));
     set({ uiFontSize: clamped });
   },
   leftSidebarOpen: true,
-  rightInspectorOpen: false,
+  rightInspectorOpen: readBool("dv_right_inspector_open", false),
   bottomDrawerOpen: false,
   bottomDrawerTab: "console",
+  leftSidebarWidth: readClampedNumber("dv_left_sidebar_width", 256, 180, 520),
+  rightInspectorWidth: readClampedNumber("dv_right_inspector_width", 300, 240, 560),
+  bottomDrawerHeight: readClampedNumber("dv_bottom_drawer_height", 208, 120, 500),
+  setLeftSidebarWidth: (px) => {
+    const clamped = Math.max(180, Math.min(520, Math.round(px)));
+    localStorage.setItem("dv_left_sidebar_width", String(clamped));
+    set({ leftSidebarWidth: clamped });
+  },
+  setRightInspectorWidth: (px) => {
+    const clamped = Math.max(240, Math.min(560, Math.round(px)));
+    localStorage.setItem("dv_right_inspector_width", String(clamped));
+    set({ rightInspectorWidth: clamped });
+  },
+  setBottomDrawerHeight: (px) => {
+    const clamped = Math.max(120, Math.min(500, Math.round(px)));
+    localStorage.setItem("dv_bottom_drawer_height", String(clamped));
+    set({ bottomDrawerHeight: clamped });
+  },
   splitMode: "none",
   toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
   toggleRightInspector: () =>
-    set((s) => ({ rightInspectorOpen: !s.rightInspectorOpen })),
+    set((s) => {
+      const next = !s.rightInspectorOpen;
+      localStorage.setItem("dv_right_inspector_open", String(next));
+      return { rightInspectorOpen: next };
+    }),
   toggleBottomDrawer: () =>
     set((s) => ({ bottomDrawerOpen: !s.bottomDrawerOpen })),
   setBottomDrawerTab: (tab) => set({ bottomDrawerTab: tab, bottomDrawerOpen: true }),
@@ -460,6 +549,28 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     get().persistOpenQueryTabs();
   },
 
+  requestCloseTab: (id) => {
+    if (id === "objects") return;
+    const state = get();
+    const target = state.tabs.find((t) => t.id === id);
+    if (!target) return;
+    if (!target.dirty) {
+      state.closeTab(id);
+      return;
+    }
+    set({
+      unsavedCloseModal: {
+        title: "Unsaved Changes",
+        message: `Tab "${target.title}" has unsaved changes. Discard and close?`,
+        dirtyTabTitles: [target.title],
+        onConfirm: () => {
+          set({ unsavedCloseModal: null });
+          get().closeTab(id);
+        },
+      },
+    });
+  },
+
   reorderTabs: (fromId, toIndex) => {
     if (fromId === "objects") return;
     const state = get();
@@ -491,6 +602,31 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     get().persistOpenQueryTabs();
   },
 
+  requestCloseOtherTabs: (keepId) => {
+    const state = get();
+    const dirtyTargets = state.tabs.filter(
+      (t) => t.id !== "objects" && t.id !== keepId && t.dirty
+    );
+    if (dirtyTargets.length === 0) {
+      state.closeOtherTabs(keepId);
+      return;
+    }
+    set({
+      unsavedCloseModal: {
+        title: "Unsaved Changes",
+        message:
+          dirtyTargets.length === 1
+            ? `Tab "${dirtyTargets[0].title}" has unsaved changes. Discard and close?`
+            : `${dirtyTargets.length} tabs have unsaved changes. Discard all and close?`,
+        dirtyTabTitles: dirtyTargets.map((t) => t.title),
+        onConfirm: () => {
+          set({ unsavedCloseModal: null });
+          get().closeOtherTabs(keepId);
+        },
+      },
+    });
+  },
+
   closeTabsToRight: (id) => {
     const state = get();
     const idx = state.tabs.findIndex((t) => t.id === id);
@@ -511,6 +647,31 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     get().persistOpenQueryTabs();
   },
 
+  requestCloseTabsToRight: (id) => {
+    const state = get();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const dirtyTargets = state.tabs.slice(idx + 1).filter((t) => t.dirty);
+    if (dirtyTargets.length === 0) {
+      state.closeTabsToRight(id);
+      return;
+    }
+    set({
+      unsavedCloseModal: {
+        title: "Unsaved Changes",
+        message:
+          dirtyTargets.length === 1
+            ? `Tab "${dirtyTargets[0].title}" has unsaved changes. Discard and close?`
+            : `${dirtyTargets.length} tabs to the right have unsaved changes. Discard all and close?`,
+        dirtyTabTitles: dirtyTargets.map((t) => t.title),
+        onConfirm: () => {
+          set({ unsavedCloseModal: null });
+          get().closeTabsToRight(id);
+        },
+      },
+    });
+  },
+
   closeAllTabs: () => {
     const state = get();
     const objectsTab = state.tabs.find((t) => t.id === "objects");
@@ -520,6 +681,29 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       secondaryTabId: null,
     });
     get().persistOpenQueryTabs();
+  },
+
+  requestCloseAllTabs: () => {
+    const state = get();
+    const dirtyTargets = state.tabs.filter((t) => t.id !== "objects" && t.dirty);
+    if (dirtyTargets.length === 0) {
+      state.closeAllTabs();
+      return;
+    }
+    set({
+      unsavedCloseModal: {
+        title: "Unsaved Changes",
+        message:
+          dirtyTargets.length === 1
+            ? `Tab "${dirtyTargets[0].title}" has unsaved changes. Discard and close?`
+            : `${dirtyTargets.length} tabs have unsaved changes. Discard all and close?`,
+        dirtyTabTitles: dirtyTargets.map((t) => t.title),
+        onConfirm: () => {
+          set({ unsavedCloseModal: null });
+          get().closeAllTabs();
+        },
+      },
+    });
   },
 
   setActiveTab: (id) => {
@@ -545,6 +729,88 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   setInspectedCell: (cell) => set({ inspectedCell: cell }),
   inspectedTableMeta: null,
   setInspectedTableMeta: (meta) => set({ inspectedTableMeta: meta }),
+  inspectedObject: null,
+  setInspectedObject: (info) => set({ inspectedObject: info }),
+  inspectDatabaseObject: async (connectionId, database, schema, object) => {
+    const cleanSchema = schema ?? null;
+    const reqKey = `${connectionId}::${database}::${cleanSchema ?? ""}::${object.kind}::${object.name}`;
+    set({
+      inspectedObject: {
+        connectionId,
+        database,
+        schema: cleanSchema,
+        object,
+        tableMeta: null,
+        ddl: null,
+        loading: true,
+      },
+    });
+
+    const isCurrent = () => {
+      const cur = get().inspectedObject;
+      if (!cur) return false;
+      const curKey = `${cur.connectionId}::${cur.database}::${cur.schema ?? ""}::${cur.object.kind}::${cur.object.name}`;
+      return curKey === reqKey;
+    };
+
+    try {
+      let tableMeta: TableMetadata | null = null;
+      let ddl: string | null = null;
+
+      if (
+        object.kind === "table" ||
+        object.kind === "view" ||
+        object.kind === "materialized_view"
+      ) {
+        try {
+          tableMeta = await api.getTableMetadata(
+            connectionId,
+            object.name,
+            database,
+            cleanSchema ?? undefined
+          );
+          ddl = tableMeta.ddl ?? null;
+        } catch {
+          tableMeta = null;
+        }
+      }
+
+      if (!ddl && object.kind !== "collection") {
+        try {
+          ddl = await api.getObjectDdl(
+            connectionId,
+            object.name,
+            object.kind,
+            database,
+            cleanSchema ?? undefined
+          );
+        } catch {
+          ddl = null;
+        }
+      }
+
+      if (!isCurrent()) return;
+      set({
+        inspectedObject: {
+          connectionId,
+          database,
+          schema: cleanSchema,
+          object,
+          tableMeta,
+          ddl,
+          loading: false,
+        },
+        ...(tableMeta ? { inspectedTableMeta: tableMeta } : {}),
+      });
+    } catch {
+      if (!isCurrent()) return;
+      set((s) =>
+        s.inspectedObject
+          ? { inspectedObject: { ...s.inspectedObject, loading: false } }
+          : s
+      );
+    }
+  },
 
   consoleLogs: [],
   toasts: [],
@@ -605,10 +871,19 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   connectionModalOpen: false,
   editingConnection: null,
-  openConnectionModal: (profile = null) =>
-    set({ connectionModalOpen: true, editingConnection: profile }),
+  initialConnectionEngine: null,
+  openConnectionModal: (profile = null, initialEngine = null) =>
+    set({
+      connectionModalOpen: true,
+      editingConnection: profile,
+      initialConnectionEngine: profile ? null : initialEngine,
+    }),
   closeConnectionModal: () =>
-    set({ connectionModalOpen: false, editingConnection: null }),
+    set({
+      connectionModalOpen: false,
+      editingConnection: null,
+      initialConnectionEngine: null,
+    }),
 
   commandPaletteOpen: false,
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
@@ -616,6 +891,9 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   safetyModal: null,
   openSafetyModal: (modal) => set({ safetyModal: { ...modal, open: true } }),
   closeSafetyModal: () => set({ safetyModal: null }),
+
+  unsavedCloseModal: null,
+  closeUnsavedCloseModal: () => set({ unsavedCloseModal: null }),
 
   bootstrap: async () => {
     await get().refreshConnections();
@@ -627,14 +905,22 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     try {
       const ids = await api.getConnectedIds();
       set({ connectedIds: new Set(ids) });
-      // Restore crash-recovered unsaved SQL tabs if any
+      // Restore crash-recovered unsaved SQL tabs if any (deduplicated by id for React StrictMode)
       const recovered = await api.loadRecoveryState("open_query_tabs");
       if (recovered) {
         const parsed: WorkbenchTab[] = JSON.parse(recovered);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          set((s) => ({
-            tabs: [...s.tabs, ...parsed],
-          }));
+          set((s) => {
+            const seen = new Set(s.tabs.map((t) => t.id));
+            const uniqueNew: WorkbenchTab[] = [];
+            for (const item of parsed) {
+              if (item && item.id && !seen.has(item.id)) {
+                seen.add(item.id);
+                uniqueNew.push(item);
+              }
+            }
+            return uniqueNew.length > 0 ? { tabs: [...s.tabs, ...uniqueNew] } : s;
+          });
         }
       }
     } catch {
@@ -679,14 +965,74 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   },
 
   disconnectFrom: async (connectionId) => {
+    const profile = get().connections.find((c) => c.id === connectionId);
     try {
       await api.disconnectDb(connectionId);
       set((s) => {
-        const next = new Set(s.connectedIds);
-        next.delete(connectionId);
-        return { connectedIds: next };
+        const nextConnected = new Set(s.connectedIds);
+        nextConnected.delete(connectionId);
+
+        // Close all tabs belonging to the disconnected connection (keep Objects tab & other connections)
+        const remainingTabs = s.tabs.filter(
+          (t) => t.id === "objects" || t.connectionId !== connectionId
+        );
+        const activeStillExists = remainingTabs.some((t) => t.id === s.activeTabId);
+        const nextActiveTabId = activeStillExists
+          ? s.activeTabId
+          : remainingTabs[remainingTabs.length - 1]?.id ?? "objects";
+
+        const secondaryStillExists =
+          s.secondaryTabId !== null && remainingTabs.some((t) => t.id === s.secondaryTabId);
+        const nextSecondaryTabId = secondaryStillExists ? s.secondaryTabId : null;
+        const nextSplitMode =
+          s.splitMode !== "none" && !nextSecondaryTabId ? "none" : s.splitMode;
+
+        // Reset browserContext if it pointed to this connection
+        const nextBrowserContext =
+          s.browserContext.connectionId === connectionId
+            ? { connectionId: null, database: null, schema: null, category: "table" as const }
+            : s.browserContext;
+
+        // Reset activeConnectionId if it pointed to this connection
+        const nextActiveConnId =
+          s.activeConnectionId === connectionId
+            ? Array.from(nextConnected)[0] ?? null
+            : s.activeConnectionId;
+
+        // Clear cached databases, schemas, and objects for this connection
+        const nextDatabasesByConn = { ...s.databasesByConn };
+        delete nextDatabasesByConn[connectionId];
+
+        const prefix = `${connectionId}::`;
+        const nextSchemasByConnDb: Record<string, SchemaInfo[]> = {};
+        for (const [k, v] of Object.entries(s.schemasByConnDb)) {
+          if (!k.startsWith(prefix)) nextSchemasByConnDb[k] = v;
+        }
+        const nextObjectsByKey: Record<string, DatabaseObject[]> = {};
+        for (const [k, v] of Object.entries(s.objectsByKey)) {
+          if (!k.startsWith(prefix)) nextObjectsByKey[k] = v;
+        }
+
+        // Clear inspector / clipboard if referencing this connection
+        const clearInspector = s.inspectedObject?.connectionId === connectionId;
+        const clearCopied = s.copiedObject?.connectionId === connectionId;
+
+        return {
+          connectedIds: nextConnected,
+          tabs: remainingTabs,
+          activeTabId: nextActiveTabId,
+          secondaryTabId: nextSecondaryTabId,
+          splitMode: nextSplitMode,
+          browserContext: nextBrowserContext,
+          activeConnectionId: nextActiveConnId,
+          databasesByConn: nextDatabasesByConn,
+          schemasByConnDb: nextSchemasByConnDb,
+          objectsByKey: nextObjectsByKey,
+          ...(clearInspector ? { inspectedObject: null, inspectedTableMeta: null } : {}),
+          ...(clearCopied ? { copiedObject: null } : {}),
+        };
       });
-      get().addLog("info", `Disconnected from ${connectionId}`);
+      get().addLog("info", `Disconnected from ${profile?.name ?? connectionId}`);
     } catch (err) {
       get().addLog("error", formatApiError(err));
     }
@@ -734,9 +1080,15 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   },
 
   persistOpenQueryTabs: () => {
-    const queryTabs = get().tabs.filter((t) => t.kind === "query" && t.sql?.trim());
-    api
-      .saveRecoveryState("open_query_tabs", JSON.stringify(queryTabs.slice(0, 10)))
-      .catch(() => {});
+    if (persistRecoveryTimer !== null) {
+      window.clearTimeout(persistRecoveryTimer);
+    }
+    persistRecoveryTimer = window.setTimeout(() => {
+      persistRecoveryTimer = null;
+      const queryTabs = get().tabs.filter((t) => t.kind === "query" && t.sql?.trim());
+      api
+        .saveRecoveryState("open_query_tabs", JSON.stringify(queryTabs.slice(0, 10)))
+        .catch(() => {});
+    }, 600);
   },
 }));

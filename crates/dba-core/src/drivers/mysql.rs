@@ -761,6 +761,23 @@ impl SqlDriver for MysqlDriver {
         Ok(())
     }
 
+    async fn rename_table(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let db = self.effective_db(database, schema);
+        let mut conn = self.get_conn(db).await?;
+        let fq_old = qualified_table(DbEngine::Mysql, db, old_name);
+        let fq_new = qualified_table(DbEngine::Mysql, db, new_name);
+        conn.query_drop(format!("RENAME TABLE {} TO {}", fq_old, fq_new))
+            .await
+            .map_err(map_mysql_error)?;
+        Ok(())
+    }
+
     async fn create_database(
         &self,
         name: &str,

@@ -333,13 +333,13 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
       {/* Header Toolbar */}
       <div className="px-3 py-2 border-b border-zinc-200 dark:border-[#32343a] bg-zinc-50 dark:bg-[#25262a] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <div className="flex rounded border border-zinc-300 dark:border-zinc-700 overflow-hidden">
+          <div className="flex rounded border border-[var(--border-strong)] overflow-hidden">
             <button
               onClick={() => setMode("export")}
               className={`h-7 px-3 flex items-center gap-1.5 font-medium ${
                 mode === "export"
                   ? "bg-indigo-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Download className="w-3.5 h-3.5" /> Export Wizard
@@ -352,7 +352,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
               className={`h-7 px-3 flex items-center gap-1.5 font-medium ${
                 mode === "import"
                   ? "bg-emerald-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Upload className="w-3.5 h-3.5" /> Import Wizard
@@ -407,7 +407,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     setConnId(e.target.value);
                     ensureConnectedAndLoaded(e.target.value);
                   }}
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                 >
                   <option value="">Select connection...</option>
                   {connections.map((c) => (
@@ -425,7 +425,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     setDatabase(e.target.value);
                     loadObjects(connId, e.target.value, e.target.value);
                   }}
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                 >
                   {dbs.length === 0 && <option value={effDb}>{effDb || "default"}</option>}
                   {dbs.map((d) => (
@@ -443,7 +443,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     setSchema(e.target.value);
                     loadObjects(connId, effDb, e.target.value);
                   }}
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                 >
                   {schemas.length === 0 && <option value={effSchema}>{effSchema || "—"}</option>}
                   {schemas.map((s) => (
@@ -460,7 +460,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   onChange={(e) => setTable(e.target.value)}
                   list="ie-tables-list"
                   placeholder="table_name"
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                 />
                 <datalist id="ie-tables-list">
                   {tables.map((t) => (
@@ -476,7 +476,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 <select
                   value={format}
                   onChange={(e) => setFormat(e.target.value as DataFileFormat)}
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                 >
                   {FORMAT_OPTIONS.filter((f) => mode === "export" || f.value !== "sql").map((f) => (
                     <option key={f.value} value={f.value}>
@@ -494,11 +494,11 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     value={filePath}
                     onChange={(e) => setFilePath(e.target.value)}
                     placeholder={`/tmp/${table || "data"}.${format}`}
-                    className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                   <button
                     onClick={handleBrowseFile}
-                    className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 flex items-center gap-1"
+                    className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1"
                   >
                     <FolderOpen className="w-3.5 h-3.5" /> Browse
                   </button>
@@ -513,7 +513,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   <input
                     value={delimiter}
                     onChange={(e) => setDelimiter(e.target.value)}
-                    className="w-10 h-6 px-1.5 text-center rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-10 h-6 px-1.5 text-center rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                 </label>
               )}
@@ -533,7 +533,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   <select
                     value={sqlMode}
                     onChange={(e) => setSqlMode(e.target.value as SqlExportMode)}
-                    className="h-6 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                    className="h-6 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                   >
                     <option value="insert">INSERT</option>
                     <option value="upsert">UPSERT (ON CONFLICT / DUPLICATE KEY)</option>
@@ -547,7 +547,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                     <select
                       value={errorPolicy}
                       onChange={(e) => setErrorPolicy(e.target.value as ImportErrorPolicy)}
-                      className="h-6 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                      className="h-6 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                     >
                       <option value="stop_on_error">Stop on error</option>
                       <option value="skip_and_log">Skip & log errors</option>
@@ -569,7 +569,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                   type="number"
                   value={batchSize}
                   onChange={(e) => setBatchSize(Number(e.target.value) || 250)}
-                  className="w-20 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-20 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                 />
               </label>
             </div>
@@ -581,7 +581,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
               <div className="font-semibold">2. Column Mapping & Type Transform</div>
               <button
                 onClick={mode === "export" ? loadExportColumns : handlePreviewImport}
-                className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
               >
                 {mode === "export" ? "Load Table Columns" : "Preview File & Detect Columns"}
               </button>
@@ -595,7 +595,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
             ) : (
               <table className="w-full border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
+                  <tr className="border-b border-[var(--border-subtle)] text-zinc-500">
                     <th className="py-1 px-2 w-10">Inc</th>
                     <th className="py-1 px-2">Source Column</th>
                     <th className="py-1 px-2">Target Column</th>
@@ -632,7 +632,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                               )
                             )
                           }
-                          className="w-full h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                          className="w-full h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                         />
                       </td>
                       <td className="py-1 px-2">
@@ -646,7 +646,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                             )
                           }
                           placeholder="auto / int / float / bool / json"
-                          className="w-full h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                          className="w-full h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                         />
                       </td>
                     </tr>
@@ -660,7 +660,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 <div className="text-[0.72rem] text-zinc-500 mb-1">
                   File Preview (first {previewRows.length} rows)
                 </div>
-                <div className="max-h-40 overflow-auto rounded border border-zinc-200 dark:border-zinc-800">
+                <div className="max-h-40 overflow-auto rounded border border-[var(--border-subtle)]">
                   <table className="w-full text-left font-mono text-[0.72rem]">
                     <tbody>
                       {previewRows.map((row, rIdx) => (
@@ -701,7 +701,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 <span className="ml-auto font-mono text-zinc-400">{result.durationMs}ms</span>
               </div>
               {result.errors.length > 0 && (
-                <pre className="p-2 rounded bg-zinc-950 text-red-300 font-mono text-[0.72rem] max-h-36 overflow-auto">
+                <pre className="p-2 rounded bg-[#1e1f22] text-red-300 font-mono text-[0.72rem] max-h-36 overflow-auto">
                   {result.errors.join("\n")}
                 </pre>
               )}
@@ -718,7 +718,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 value={profileName}
                 onChange={(e) => setProfileName(e.target.value)}
                 placeholder={`Save current ${mode} config...`}
-                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
               />
               <button
                 onClick={handleSaveProfile}
@@ -735,7 +735,7 @@ export const ImportExportWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
                 profiles.map((p) => (
                   <div
                     key={p.id}
-                    className="p-2 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#1e1f22] flex items-center justify-between gap-2"
+                    className="p-2 rounded border border-[var(--border-subtle)] bg-white dark:bg-[#1e1f22] flex items-center justify-between gap-2"
                   >
                     <button
                       onClick={() => applyProfile(p)}

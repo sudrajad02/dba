@@ -421,13 +421,24 @@ impl WorkspaceStore {
         Ok(serde_json::from_str(&raw)?)
     }
 
-    pub fn save_snippet(&self, snippet: CodeSnippet) -> Result<Vec<CodeSnippet>> {
+    pub fn save_snippet(&self, mut snippet: CodeSnippet) -> Result<Vec<CodeSnippet>> {
+        if snippet.id.trim().is_empty() {
+            snippet.id = uuid::Uuid::new_v4().to_string();
+        }
         let mut all = self.list_snippets()?;
         if let Some(existing) = all.iter_mut().find(|s| s.id == snippet.id) {
             *existing = snippet;
         } else {
             all.push(snippet);
         }
+        let file = self.paths.snippets_dir.join("snippets.json");
+        fs::write(&file, serde_json::to_string_pretty(&all)?)?;
+        Ok(all)
+    }
+
+    pub fn delete_snippet(&self, id: &str) -> Result<Vec<CodeSnippet>> {
+        let mut all = self.list_snippets()?;
+        all.retain(|s| s.id != id);
         let file = self.paths.snippets_dir.join("snippets.json");
         fs::write(&file, serde_json::to_string_pretty(&all)?)?;
         Ok(all)

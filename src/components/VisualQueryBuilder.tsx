@@ -620,7 +620,7 @@ export const VisualQueryBuilder: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => 
 
             <div className="flex-1 overflow-auto p-2.5">
               {clauseTab === "sql" && (
-                <pre className="h-full p-2.5 rounded bg-zinc-950 text-emerald-300 font-mono text-[0.75rem] whitespace-pre-wrap overflow-auto">
+                <pre className="h-full p-2.5 rounded bg-[#1e1f22] text-emerald-300 font-mono text-[0.75rem] whitespace-pre-wrap overflow-auto">
                   {generatedSql}
                 </pre>
               )}

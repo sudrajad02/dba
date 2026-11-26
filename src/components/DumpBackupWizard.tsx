@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   CheckCircle2,
   FileCode2,
   FolderOpen,
   HardDriveDownload,
+  Loader2,
   Play,
   RefreshCw,
   Square,
@@ -14,6 +16,7 @@ import {
 import { api, formatApiError } from "../lib/tauri";
 import { useWorkbenchStore, type WorkbenchTab } from "../store/useWorkbenchStore";
 import type {
+  DataJobProgress,
   DataJobResult,
   ImportErrorPolicy,
   NativeCliRunResult,
@@ -76,8 +79,30 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   // Common job state
   const [running, setRunning] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<DataJobProgress | null>(null);
   const [jobResult, setJobResult] = useState<DataJobResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Subscribe to backend streaming progress events for active job
+  useEffect(() => {
+    if (!activeJobId) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listen<DataJobProgress>("data-job-progress", (event) => {
+      if (event.payload && event.payload.jobId === activeJobId) {
+        setProgress(event.payload);
+      }
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [activeJobId]);
 
   const conn = connections.find((c) => c.id === connId);
   const dbs = databasesByConn[connId] ?? [];
@@ -130,14 +155,63 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     }
   };
 
+  const handleSelectDatabase = async (dbName: string) => {
+    setDatabase(dbName);
+    setSelectedTables(new Set());
+    setError(null);
+    if (!connId || !dbName) return;
+    if (conn?.engine === "postgres" || conn?.engine === "mssql") {
+      const sc = await loadSchemas(connId, dbName);
+      const pref = conn.engine === "mssql" ? "dbo" : "public";
+      const chosen = sc.find((s) => s.name === pref)?.name ?? sc[0]?.name ?? pref;
+      setSchema(chosen);
+      await loadObjects(connId, dbName, chosen);
+    } else {
+      setSchema(dbName);
+      await loadObjects(connId, dbName, dbName);
+    }
+  };
+
   const handleRunDump = async () => {
     const tbls = Array.from(selectedTables);
-    if (!connId || tbls.length === 0 || !dumpPath.trim()) {
-      setError("Select connection, at least one table, and output .sql file path.");
+    if (!connId) {
+      setError("Please select a connection.");
       return;
+    }
+    if (tbls.length === 0) {
+      setError("Please select at least one table to dump.");
+      return;
+    }
+    let targetPath = dumpPath.trim();
+    if (!targetPath) {
+      try {
+        const picked = await saveDialog({
+          defaultPath: `${effDb || "backup"}_dump.sql`,
+          filters: [{ name: "SQL", extensions: ["sql"] }],
+        });
+        if (typeof picked === "string" && picked.trim()) {
+          targetPath = picked.trim();
+          setDumpPath(targetPath);
+        } else {
+          setError("Please choose an output .sql file path (or click Browse).");
+          return;
+        }
+      } catch (err) {
+        setError(`Failed to open save dialog: ${formatApiError(err)}`);
+        return;
+      }
     }
     const jobId = `dump-${Date.now()}`;
     setActiveJobId(jobId);
+    setProgress({
+      jobId,
+      percent: 0,
+      currentItem: tbls[0] ?? "Initializing...",
+      completedItems: 0,
+      totalItems: tbls.length,
+      rowsProcessed: 0,
+      elapsedMs: 0,
+    });
     setRunning(true);
     setError(null);
     setJobResult(null);
@@ -148,7 +222,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         database: effDb || null,
         schema: effSchema || null,
         tables: tbls,
-        outputPath: dumpPath.trim(),
+        outputPath: targetPath,
         includeStructure,
         includeData,
         dropExisting,
@@ -161,6 +235,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     } finally {
       setRunning(false);
       setActiveJobId(null);
+      setProgress(null);
     }
   };
 
@@ -180,6 +255,15 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     }
     const jobId = `execsql-${Date.now()}`;
     setActiveJobId(jobId);
+    setProgress({
+      jobId,
+      percent: 0,
+      currentItem: "Starting SQL file execution...",
+      completedItems: 0,
+      totalItems: 0,
+      rowsProcessed: 0,
+      elapsedMs: 0,
+    });
     setRunning(true);
     setError(null);
     setJobResult(null);
@@ -199,6 +283,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
     } finally {
       setRunning(false);
       setActiveJobId(null);
+      setProgress(null);
     }
   };
 
@@ -255,13 +340,13 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       {/* Top Bar */}
       <div className="px-3 py-2 border-b border-zinc-200 dark:border-[#32343a] bg-zinc-50 dark:bg-[#25262a] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <div className="flex rounded border border-zinc-300 dark:border-zinc-700 overflow-hidden">
+          <div className="flex rounded border border-[var(--border-strong)] overflow-hidden">
             <button
               onClick={() => setSection("dump")}
               className={`h-7 px-3 flex items-center gap-1.5 font-medium ${
                 section === "dump"
                   ? "bg-blue-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <HardDriveDownload className="w-3.5 h-3.5" /> Built-in SQL Dump
@@ -271,7 +356,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-3 flex items-center gap-1.5 font-medium ${
                 section === "execute_sql"
                   ? "bg-emerald-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <FileCode2 className="w-3.5 h-3.5" /> Execute SQL File
@@ -281,7 +366,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               className={`h-7 px-3 flex items-center gap-1.5 font-medium ${
                 section === "native_cli"
                   ? "bg-indigo-600 text-white"
-                  : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
             >
               <Terminal className="w-3.5 h-3.5" /> Native CLI Tools
@@ -293,7 +378,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           <select
             value={connId}
             onChange={(e) => handleSelectConnection(e.target.value)}
-            className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+            className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
           >
             <option value="">Select Connection...</option>
             {connections.map((c) => (
@@ -304,8 +389,8 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
           </select>
           <select
             value={effDb}
-            onChange={(e) => setDatabase(e.target.value)}
-            className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+            onChange={(e) => handleSelectDatabase(e.target.value)}
+            className="h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
           >
             {dbs.length === 0 && <option value={effDb}>{effDb || "default"}</option>}
             {dbs.map((d) => (
@@ -331,6 +416,52 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
         </div>
       )}
 
+      {running && (
+        <div className="px-4 py-2.5 border-b border-[var(--border-subtle)] bg-blue-500/8 space-y-1.5 shrink-0">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                {section === "dump"
+                  ? progress
+                    ? `Dumping table ${Math.min(progress.completedItems + 1, progress.totalItems)}/${progress.totalItems}: ${progress.currentItem}`
+                    : "Streaming SQL Dump..."
+                  : section === "execute_sql"
+                  ? progress?.currentItem || "Executing SQL file..."
+                  : `Running ${selectedTool}...`}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 font-mono text-[0.75rem]">
+              {progress && (
+                <>
+                  <span className="text-zinc-500">
+                    {section === "dump"
+                      ? `${progress.rowsProcessed.toLocaleString()} rows`
+                      : `${progress.rowsProcessed.toLocaleString()} stmts`}
+                  </span>
+                  <span className="text-zinc-500">
+                    {(progress.elapsedMs / 1000).toFixed(1)}s
+                  </span>
+                  <span className="font-bold text-blue-500 dark:text-blue-400 w-12 text-right">
+                    {progress.percent.toFixed(1)}%
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="w-full h-2 rounded-full bg-[var(--surface-elevated)] overflow-hidden">
+            {progress ? (
+              <div
+                className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-150 ease-out rounded-full"
+                style={{ width: `${Math.max(2, Math.min(100, progress.percent))}%` }}
+              />
+            ) : (
+              <div className="h-full w-1/3 bg-indigo-500 animate-pulse rounded-full" />
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {section === "dump" && (
           <div className="max-w-4xl space-y-4">
@@ -352,7 +483,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   </button>
                 </div>
               </div>
-              <div className="max-h-48 overflow-auto grid grid-cols-2 sm:grid-cols-3 gap-1.5 p-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-200 dark:border-zinc-800">
+              <div className="max-h-48 overflow-auto grid grid-cols-2 sm:grid-cols-3 gap-1.5 p-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-subtle)]">
                 {tables.length === 0 ? (
                   <div className="col-span-full py-4 text-center text-zinc-500">
                     Connect and select a database/schema to list tables.
@@ -361,7 +492,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   tables.map((t) => (
                     <label
                       key={t.name}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer font-mono"
+                      className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[var(--surface-hover)] cursor-pointer font-mono"
                     >
                       <input
                         type="checkbox"
@@ -381,25 +512,41 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 )}
               </div>
 
-              <div className="flex gap-1.5">
-                <input
-                  value={dumpPath}
-                  onChange={(e) => setDumpPath(e.target.value)}
-                  placeholder={`/tmp/${effDb || "backup"}_dump.sql`}
-                  className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
-                />
-                <button
-                  onClick={async () => {
-                    const p = await saveDialog({
-                      defaultPath: `${effDb || "backup"}_dump.sql`,
-                      filters: [{ name: "SQL", extensions: ["sql"] }],
-                    });
-                    if (typeof p === "string") setDumpPath(p);
-                  }}
-                  className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 flex items-center gap-1"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" /> Browse
-                </button>
+              <div className="space-y-1">
+                <label className="block text-[0.72rem] text-zinc-500">
+                  Output <code>.sql</code> File Path
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    value={dumpPath}
+                    onChange={(e) => {
+                      setDumpPath(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    placeholder={`Click Browse or type path, e.g. /tmp/${effDb || "backup"}_dump.sql`}
+                    className="flex-1 h-7 px-2 rounded bg-[var(--surface-canvas)] border border-[var(--border-strong)] font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const p = await saveDialog({
+                          defaultPath: `${effDb || "backup"}_dump.sql`,
+                          filters: [{ name: "SQL", extensions: ["sql"] }],
+                        });
+                        if (typeof p === "string" && p.trim()) {
+                          setDumpPath(p);
+                          setError(null);
+                        }
+                      } catch (err) {
+                        setError(`Failed to open save dialog: ${formatApiError(err)}`);
+                      }
+                    }}
+                    className="h-7 px-2.5 rounded border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] flex items-center gap-1 cursor-pointer"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" /> Browse
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-4">
@@ -433,7 +580,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     type="number"
                     value={chunkSize}
                     onChange={(e) => setChunkSize(Number(e.target.value) || 250)}
-                    className="w-20 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-20 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                 </label>
               </div>
@@ -441,9 +588,18 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               <button
                 disabled={running}
                 onClick={handleRunDump}
-                className="h-8 px-4 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium flex items-center gap-1.5"
+                className="h-8 px-4 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-medium flex items-center gap-1.5 cursor-pointer"
               >
-                <Play className="w-3.5 h-3.5 fill-current" /> Start Streaming SQL Dump
+                {running ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Dumping... {progress ? `(${progress.percent.toFixed(0)}%)` : ""}
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" /> Start Streaming SQL Dump
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -461,7 +617,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 value={sqlFilePath}
                 onChange={(e) => setSqlFilePath(e.target.value)}
                 placeholder="/path/to/dump.sql"
-                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                className="flex-1 h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
               />
               <button
                 onClick={async () => {
@@ -471,7 +627,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   });
                   if (typeof p === "string") setSqlFilePath(p);
                 }}
-                className="h-7 px-2.5 rounded border border-zinc-300 dark:border-zinc-700 flex items-center gap-1"
+                className="h-7 px-2.5 rounded border border-[var(--border-strong)] flex items-center gap-1"
               >
                 <FolderOpen className="w-3.5 h-3.5" /> Browse
               </button>
@@ -483,7 +639,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <select
                   value={errorPolicy}
                   onChange={(e) => setErrorPolicy(e.target.value as ImportErrorPolicy)}
-                  className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                  className="h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                 >
                   <option value="stop_on_error">Stop on first error</option>
                   <option value="skip_and_log">Continue & log errors</option>
@@ -509,7 +665,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <span className="font-semibold">Auto-Detected Native CLI Binaries (PATH)</span>
                 <button
                   onClick={loadCliTools}
-                  className="h-6 px-2 rounded border border-zinc-300 dark:border-zinc-700 flex items-center gap-1"
+                  className="h-6 px-2 rounded border border-[var(--border-strong)] flex items-center gap-1"
                 >
                   <RefreshCw className="w-3 h-3" /> Re-scan
                 </button>
@@ -524,8 +680,8 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                       selectedTool === t.name
                         ? "border-indigo-500 bg-indigo-500/15"
                         : t.available
-                        ? "border-zinc-300 dark:border-zinc-700 hover:border-sky-500"
-                        : "border-zinc-200 dark:border-zinc-800 opacity-45 cursor-not-allowed"
+                        ? "border-[var(--border-strong)] hover:border-sky-500"
+                        : "border-[var(--border-subtle)] opacity-45 cursor-not-allowed"
                     }`}
                   >
                     <div className="flex items-center justify-between">
@@ -559,7 +715,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     value={cliFilePath}
                     onChange={(e) => setCliFilePath(e.target.value)}
                     placeholder={`/tmp/${effDb || "db"}_backup.dump`}
-                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                 </div>
                 <div>
@@ -567,7 +723,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   <select
                     value={cliFormat}
                     onChange={(e) => setCliFormat(e.target.value)}
-                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700"
+                    className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)]"
                   >
                     <option value="custom">Custom Binary (-Fc)</option>
                     <option value="plain">Plain SQL (-Fp)</option>
@@ -610,7 +766,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                     max={16}
                     value={cliJobs}
                     onChange={(e) => setCliJobs(Number(e.target.value) || 1)}
-                    className="w-16 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                    className="w-16 h-6 px-1.5 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                   />
                 </label>
               </div>
@@ -621,7 +777,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   value={cliExtraArgs}
                   onChange={(e) => setCliExtraArgs(e.target.value)}
                   placeholder="--no-owner --no-acl"
-                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-zinc-300 dark:border-zinc-700 font-mono"
+                  className="w-full h-7 px-2 rounded bg-white dark:bg-[#1e1f22] border border-[var(--border-strong)] font-mono"
                 />
               </div>
 
@@ -651,7 +807,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                   </span>
                 </div>
                 {(cliResult.stdout || cliResult.stderr) && (
-                  <pre className="p-2.5 rounded bg-zinc-950 text-zinc-200 font-mono text-[0.72rem] max-h-56 overflow-auto whitespace-pre-wrap">
+                  <pre className="p-2.5 rounded bg-[#1e1f22] text-zinc-200 font-mono text-[0.72rem] max-h-56 overflow-auto whitespace-pre-wrap">
                     {cliResult.stdout}
                     {cliResult.stderr ? `\n${cliResult.stderr}` : ""}
                   </pre>
@@ -679,7 +835,7 @@ export const DumpBackupWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
               <span className="ml-auto font-mono text-zinc-400">{jobResult.durationMs}ms</span>
             </div>
             {jobResult.errors.length > 0 && (
-              <pre className="p-2 rounded bg-zinc-950 text-red-300 font-mono text-[0.72rem] max-h-40 overflow-auto">
+              <pre className="p-2 rounded bg-[#1e1f22] text-red-300 font-mono text-[0.72rem] max-h-40 overflow-auto">
                 {jobResult.errors.join("\n")}
               </pre>
             )}

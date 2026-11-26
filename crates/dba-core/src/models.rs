@@ -744,6 +744,18 @@ pub struct DataJobResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DataJobProgress {
+    pub job_id: String,
+    pub percent: f64,
+    pub current_item: String,
+    pub completed_items: u64,
+    pub total_items: u64,
+    pub rows_processed: u64,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DataJobProfile {
     pub id: String,
     pub name: String,

@@ -1043,13 +1043,79 @@ impl SqlDriver for PostgresDriver {
         kind: ObjectKind,
     ) -> Result<()> {
         let client = self.get_client(database).await?;
-        let fq = qualified_table(DbEngine::Postgres, schema, name);
+        let sc = schema
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("public");
+        let fq = qualified_table(DbEngine::Postgres, Some(sc), name);
+
+        match kind {
+            ObjectKind::Trigger => {
+                let row = client
+                    .query_opt(
+                        "SELECT c.relname
+                         FROM pg_trigger t
+                         JOIN pg_class c ON t.tgrelid = c.oid
+                         JOIN pg_namespace n ON c.relnamespace = n.oid
+                         WHERE t.tgname = $1 AND n.nspname = $2 AND NOT t.tgisinternal
+                         LIMIT 1",
+                        &[&name, &sc],
+                    )
+                    .await
+                    .map_err(map_pg_error)?;
+                let table_name: String = row
+                    .map(|r| r.get(0))
+                    .ok_or_else(|| DbaError::Database {
+                        message: format!(
+                            "Could not locate owning table for trigger \"{}\" in schema \"{}\"",
+                            name, sc
+                        ),
+                        code: None,
+                        detail: None,
+                        line: None,
+                    })?;
+                let sql = format!(
+                    "DROP TRIGGER {} ON {}",
+                    quote_ident(DbEngine::Postgres, name),
+                    qualified_table(DbEngine::Postgres, Some(sc), &table_name)
+                );
+                client.execute(&sql, &[]).await.map_err(map_pg_error)?;
+                return Ok(());
+            }
+            ObjectKind::Function | ObjectKind::Procedure => {
+                let keyword = if matches!(kind, ObjectKind::Procedure) {
+                    "PROCEDURE"
+                } else {
+                    "FUNCTION"
+                };
+                let row = client
+                    .query_opt(
+                        "SELECT pg_get_function_identity_arguments(p.oid)
+                         FROM pg_proc p
+                         JOIN pg_namespace n ON p.pronamespace = n.oid
+                         WHERE p.proname = $1 AND n.nspname = $2
+                         ORDER BY p.oid
+                         LIMIT 1",
+                        &[&name, &sc],
+                    )
+                    .await
+                    .map_err(map_pg_error)?;
+                let sql = if let Some(r) = row {
+                    let args: String = r.get(0);
+                    format!("DROP {} {}({})", keyword, fq, args)
+                } else {
+                    format!("DROP {} {}", keyword, fq)
+                };
+                client.execute(&sql, &[]).await.map_err(map_pg_error)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
         let keyword = match kind {
             ObjectKind::Table => "TABLE",
             ObjectKind::View => "VIEW",
             ObjectKind::MaterializedView => "MATERIALIZED VIEW",
-            ObjectKind::Function => "FUNCTION",
-            ObjectKind::Procedure => "PROCEDURE",
             ObjectKind::Sequence => "SEQUENCE",
             ObjectKind::Index => "INDEX",
             ObjectKind::EnumType => "TYPE",
@@ -1059,6 +1125,42 @@ impl SqlDriver for PostgresDriver {
             .execute(&format!("DROP {} {}", keyword, fq), &[])
             .await
             .map_err(map_pg_error)?;
+        Ok(())
+    }
+
+    async fn rename_table(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        let client = self.get_client(database).await?;
+        let fq_old = qualified_table(DbEngine::Postgres, schema, old_name);
+        let sql = format!(
+            "ALTER TABLE {} RENAME TO {}",
+            fq_old,
+            quote_ident(DbEngine::Postgres, new_name)
+        );
+        client.execute(&sql, &[]).await.map_err(map_pg_error)?;
+        Ok(())
+    }
+
+    async fn create_schema(&self, database: Option<&str>, name: &str) -> Result<()> {
+        let client = self.get_client(database).await?;
+        let sql = format!("CREATE SCHEMA {}", quote_ident(DbEngine::Postgres, name));
+        client.execute(&sql, &[]).await.map_err(map_pg_error)?;
+        Ok(())
+    }
+
+    async fn drop_schema(&self, database: Option<&str>, name: &str, cascade: bool) -> Result<()> {
+        let client = self.get_client(database).await?;
+        let sql = if cascade {
+            format!("DROP SCHEMA {} CASCADE", quote_ident(DbEngine::Postgres, name))
+        } else {
+            format!("DROP SCHEMA {}", quote_ident(DbEngine::Postgres, name))
+        };
+        client.execute(&sql, &[]).await.map_err(map_pg_error)?;
         Ok(())
     }
 

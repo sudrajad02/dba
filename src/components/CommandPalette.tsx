@@ -216,10 +216,10 @@ export const CommandPalette: React.FC = () => {
       onClick={() => setCommandPaletteOpen(false)}
     >
       <div
-        className="w-full max-w-xl rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+        className="w-full max-w-xl rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-3.5 py-2.5 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+        <div className="px-3.5 py-2.5 border-b border-[var(--border-subtle)] flex items-center gap-2">
           <Search className="w-4 h-4 text-zinc-500" />
           <input
             autoFocus
@@ -264,7 +264,7 @@ export const CommandPalette: React.FC = () => {
                 className={`w-full px-3 py-2 rounded-lg text-left flex items-center gap-2.5 text-xs transition ${
                   idx === selectedIdx
                     ? "bg-indigo-600 text-white"
-                    : "text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    : "text-zinc-800 dark:text-zinc-200 hover:bg-[var(--surface-hover)]"
                 }`}
               >
                 {item.kind === "connection" && <Database className="w-4 h-4 shrink-0" />}

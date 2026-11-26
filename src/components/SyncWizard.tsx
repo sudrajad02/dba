@@ -678,7 +678,7 @@ export const SyncWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                 <Copy className="w-3.5 h-3.5" /> Copy SQL
               </button>
             </div>
-            <pre className="flex-1 overflow-auto p-3 font-mono text-[0.75rem] bg-zinc-950 text-emerald-300 whitespace-pre-wrap">
+            <pre className="flex-1 overflow-auto p-3 font-mono text-[0.75rem] bg-[#1e1f22] text-emerald-300 whitespace-pre-wrap">
               {activeStatements.length > 0
                 ? activeStatements.join("\n\n")
                 : "-- No migration statements selected."}
@@ -828,14 +828,14 @@ export const SyncWizard: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
                                 </span>
                               </div>
                             )}
-                            <div className="font-mono text-[0.7rem] text-zinc-300 bg-zinc-950/60 p-1.5 rounded overflow-x-auto">
+                            <div className="font-mono text-[0.7rem] text-zinc-300 bg-[#1e1f22]/90 p-1.5 rounded overflow-x-auto">
                               {row.sql}
                             </div>
                           </div>
                         ))
                       )}
                     </div>
-                    <pre className="overflow-auto p-3 font-mono text-[0.72rem] bg-zinc-950 text-emerald-300 whitespace-pre-wrap">
+                    <pre className="overflow-auto p-3 font-mono text-[0.72rem] bg-[#1e1f22] text-emerald-300 whitespace-pre-wrap">
                       {currentDataDiff.statements.length > 0
                         ? currentDataDiff.statements.join("\n")
                         : "-- No sync SQL statements for this table."}
