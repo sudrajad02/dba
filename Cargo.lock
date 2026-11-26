@@ -1189,7 +1189,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dba-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "dba-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1231,7 +1231,7 @@ dependencies = [
 
 [[package]]
 name = "dba-tauri"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "dba-core",
  "serde",
