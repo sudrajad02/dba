@@ -29,7 +29,7 @@ Setelah iterasi v1 (`PRD-improvement.md`) menyelesaikan dasar ergonomi tab, grid
 | :---: | :--- | :---: |
 | **Phase 1** | Navicat Visual System, Top Chrome/Ribbon, Keep-Alive Tabs, Smart Context Menu, Resizable & Unsaved Guard | ✅ Selesai |
 | **Phase 2** | Navicat 3-Pane Navigation, Halaman Trigger, Always-Visible Sidebar, Information Pane & Unified Right-Click | ✅ Selesai |
-| **Phase 3** | Hybrid Routine, Trigger & View Designer + Parameterized Execution Engine | ⬜ Belum Dimulai |
+| **Phase 3** | Hybrid Routine, Trigger & View Designer + Parameterized Execution Engine | ✅ Selesai |
 | **Phase 4** | 60fps Native ER Diagram Optimization & Table Designer Full `ALTER TABLE` + Navicat Field UX | ⬜ Belum Dimulai |
 | **Phase 5** | Navicat Grid & Query Studio Polish, Driver Data Integrity, Wizard Fixes & Security Hardening | ⬜ Belum Dimulai |
 
@@ -42,7 +42,7 @@ Setelah iterasi v1 (`PRD-improvement.md`) menyelesaikan dasar ergonomi tab, grid
 | 3 | Klik kanan di object sidebar ala Navicat *(v2 #3)* | `ObjectExplorer.tsx`, `ContextMenu.tsx`, `dba-core` (`rename_table`, `create_schema`) | **Phase 2** | ✅ |
 | 4 | Optimasi performa ER Diagram agar geser/zoom tidak patah-patah *(v2 #4)* | `ErDiagramDesigner.tsx` | **Phase 4** | ⬜ |
 | 5 | Klik kanan di halaman Objects ala Navicat *(v2 #5)* | `ObjectsBrowser.tsx`, `ContextMenu.tsx` | **Phase 2** | ✅ |
-| 6 | Tambah, Edit, dan Execution untuk Function, Procedure, Trigger (+ View) *(v2 #6)* | `ObjectScriptDesigner.tsx`, `ExecuteRoutineModal.tsx`, `dba-core` drivers | **Phase 3** | ⬜ |
+| 6 | Tambah, Edit, dan Execution untuk Function, Procedure, Trigger (+ View) *(v2 #6)* | `ObjectScriptDesigner.tsx`, `ExecuteRoutineModal.tsx`, `dba-core` drivers | **Phase 3** | ✅ |
 | 7 | Halaman Trigger belum ada *(v2 #7)* | `NavicatToolbar.tsx`, `ObjectsBrowser.tsx`, `ObjectExplorer.tsx`, `useWorkbenchStore.ts` | **Phase 2** | ✅ |
 | 8 | Klik kanan row terakhir tabel terpotong (Delete Row hilang); auto-flip ke atas *(v2 #8)* | `ContextMenu.tsx`, `DataViewer.tsx`, `ObjectExplorer.tsx`, `ObjectsBrowser.tsx` | **Phase 1** | ✅ |
 | 9 | Kategori kiri (`Tables`, `Views`, `Functions`, `Triggers`, `Queries`) tetap tampil walau kosong *(v2 #9)* | `ObjectExplorer.tsx` | **Phase 2** | ✅ |
@@ -459,14 +459,14 @@ flowchart TD
 ### Phase 3 — Hybrid Routine, Trigger & View Designer + Parameterized Execution Engine
 *Target: User dapat membuat, mengedit, dan mengeksekusi Function, Procedure, Trigger, dan View secara visual-hybrid dengan aman di PostgreSQL, MySQL/MariaDB, dan MSSQL.*
 
-- [ ] **Backend Routine Introspection & Safe DDL Save (`crates/dba-core`, `src-tauri/src/lib.rs`):**
-  - [ ] Tambah `get_routine_parameters` (PG `pg_proc`, MySQL `information_schema.PARAMETERS`, MSSQL `sys.parameters`).
-  - [ ] Tambah `save_object_ddl` (PG `CREATE OR REPLACE` / transactional trigger replace, MSSQL `CREATE OR ALTER`, dan **MySQL Safe Swap** dengan auto-restore DDL lama bila syntax error).
-  - [ ] Perbaiki `MysqlDriver::execute_query` (`CALL` result sets, `is_compound_ddl`, `DELIMITER`), `MssqlDriver::execute_query` (`is_compound_ddl`, `GO`), dan `split_sql_statements` (PG `$tag$`, MySQL `\'`/backtick/`#`, MSSQL `[...]`).
-- [ ] **Hybrid `ObjectScriptDesigner.tsx` (Function, Procedure, Trigger, View):**
-  - [ ] Tambah tab kind `object_designer` dengan form metadata collapsible (Parameter Builder untuk Routine, Target Table/Timing/Events untuk Trigger, Preview Data untuk View) + Monaco SQL Editor + Safety Guard Production.
-- [ ] **Execute Routine Modal (`src/components/ExecuteRoutineModal.tsx`):**
-  - [ ] Buat modal input parameter otomatis (`IN`/`INOUT` + checkbox `NULL`) + live preview SQL (`SELECT`/`CALL`/`EXEC`) + panel hasil eksekusi + tombol *"Open in Query Editor"*, terhubung dari `ObjectExplorer`, `ObjectsBrowser`, dan `ObjectScriptDesigner`.
+- [x] **Backend Routine Introspection & Safe DDL Save (`crates/dba-core`, `src-tauri/src/lib.rs`):**
+  - [x] Tambah `get_routine_parameters` (PG `pg_proc`, MySQL `information_schema.PARAMETERS`, MSSQL `sys.parameters`).
+  - [x] Tambah `save_object_ddl` (PG `CREATE OR REPLACE` / transactional trigger replace, MSSQL `CREATE OR ALTER`, dan **MySQL Safe Swap** dengan auto-restore DDL lama bila syntax error).
+  - [x] Perbaiki `MysqlDriver::execute_query` (`CALL` result sets, `is_compound_ddl`, `DELIMITER`), `MssqlDriver::execute_query` (`is_compound_ddl`, `GO`), dan `split_sql_statements` (PG `$tag$`, MySQL `\'`/backtick/`#`, MSSQL `[...]`).
+- [x] **Hybrid `ObjectScriptDesigner.tsx` (Function, Procedure, Trigger, View):**
+  - [x] Tambah tab kind `object_designer` dengan form metadata collapsible (Parameter Builder untuk Routine, Target Table/Timing/Events untuk Trigger, Preview Data untuk View) + Monaco SQL Editor + Safety Guard Production.
+- [x] **Execute Routine Modal (`src/components/ExecuteRoutineModal.tsx`):**
+  - [x] Buat modal input parameter otomatis (`IN`/`INOUT` + checkbox `NULL`) + live preview SQL (`SELECT`/`CALL`/`EXEC`) + panel hasil eksekusi + tombol *"Open in Query Editor"*, terhubung dari `ObjectExplorer`, `ObjectsBrowser`, dan `ObjectScriptDesigner`.
 
 **Kriteria Selesai (Acceptance Criteria) Phase 3:**
 - Create & Edit Function, Procedure, Trigger, dan View berjalan mulus di MySQL, PostgreSQL, dan MSSQL tanpa error semicolon/delimiter; edit MySQL yang gagal sintaks otomatis memulihkan definisi lama.

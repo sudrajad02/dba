@@ -230,6 +230,7 @@ pub async fn run_execute_sql_file(
     let mut in_double = false;
     let mut in_dollar = false;
     let mut in_block_comment = false;
+    let mut delimiter = ";".to_string();
 
     let mut executed = 0u64;
     let mut failed = 0u64;
@@ -277,6 +278,62 @@ pub async fn run_execute_sql_file(
                     rows_processed: executed,
                     elapsed_ms: start.elapsed().as_millis() as u64,
                 });
+            }
+        }
+
+        // Handle MySQL `DELIMITER <token>` directive on its own line
+        if !in_single && !in_double && !in_dollar && !in_block_comment {
+            let trimmed_line = line_buf.trim();
+            if trimmed_line.len() >= 10 && trimmed_line[..10].eq_ignore_ascii_case("DELIMITER ") {
+                let next_delim = trimmed_line[10..].trim();
+                if !next_delim.is_empty() {
+                    delimiter = next_delim.to_string();
+                    continue;
+                }
+            }
+            if delimiter != ";" {
+                if let Some(before) = trimmed_line.strip_suffix(&delimiter) {
+                    if !before.trim().is_empty() {
+                        current.push_str(before);
+                        current.push('\n');
+                    }
+                    let stmt = current.trim().to_string();
+                    current.clear();
+                    if !stmt.is_empty() && !is_only_comments(&stmt) {
+                        match driver
+                            .execute_query(req.database.as_deref(), &stmt, &job_id)
+                            .await
+                        {
+                            Ok(_) => executed += 1,
+                            Err(err) => {
+                                failed += 1;
+                                if errors.len() < 50 {
+                                    errors.push(err.to_string());
+                                }
+                                if req.error_policy == ImportErrorPolicy::StopOnError {
+                                    return Ok(DataJobResult {
+                                        job_id,
+                                        ok: false,
+                                        cancelled: false,
+                                        rows_processed: executed,
+                                        rows_failed: failed,
+                                        duration_ms: start.elapsed().as_millis() as u64,
+                                        output_path: None,
+                                        summary: format!(
+                                            "Stopped on error after {} statement(s)",
+                                            executed
+                                        ),
+                                        errors,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                } else {
+                    current.push_str(&line_buf);
+                    continue;
+                }
             }
         }
 

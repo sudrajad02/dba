@@ -116,6 +116,24 @@ pub trait SqlDriver: Send + Sync {
             "Dropping schemas is not supported for this engine".into(),
         ))
     }
+    async fn get_routine_parameters(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<RoutineSignature> {
+        let _ = (database, schema, name, kind);
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Routine parameter introspection is not supported for this engine".into(),
+        ))
+    }
+    async fn save_object_ddl(&self, req: &SaveObjectDdlRequest) -> Result<()> {
+        let _ = req;
+        Err(crate::error::DbaError::UnsupportedEngine(
+            "Saving object DDL is not supported for this engine".into(),
+        ))
+    }
 }
 
 /// Validates a charset/collation/encoding token so it cannot inject SQL.
@@ -257,13 +275,16 @@ pub fn build_staged_change_sql(
     stmts
 }
 
-/// Returns true when the SQL is a single compound routine/trigger/event DDL statement
-/// (e.g. `CREATE PROCEDURE ... BEGIN ... ; END`) whose internal semicolons must NOT be
-/// split by `split_sql_statements`.
-pub fn is_compound_ddl(sql: &str) -> bool {
+/// Strips leading SQL comments (`--`, `#`, `/* ... */`) and whitespace.
+pub fn strip_leading_sql_comments(sql: &str) -> &str {
     let mut s = sql.trim_start();
     loop {
         if let Some(rest) = s.strip_prefix("--") {
+            s = match rest.find('\n') {
+                Some(idx) => rest[idx + 1..].trim_start(),
+                None => "",
+            };
+        } else if let Some(rest) = s.strip_prefix('#') {
             s = match rest.find('\n') {
                 Some(idx) => rest[idx + 1..].trim_start(),
                 None => "",
@@ -277,12 +298,23 @@ pub fn is_compound_ddl(sql: &str) -> bool {
             break;
         }
     }
+    s
+}
 
+/// Returns true when the SQL is a single compound routine/trigger/event DDL statement
+/// (e.g. `CREATE PROCEDURE ... BEGIN ... ; END`) whose internal semicolons must NOT be
+/// split by `split_sql_statements`.
+pub fn is_compound_ddl(sql: &str) -> bool {
+    let s = strip_leading_sql_comments(sql);
     let upper = s.to_ascii_uppercase();
     if !(upper.starts_with("CREATE ")
         || upper.starts_with("CREATE\t")
         || upper.starts_with("CREATE\n")
-        || upper.starts_with("CREATE\r"))
+        || upper.starts_with("CREATE\r")
+        || upper.starts_with("ALTER ")
+        || upper.starts_with("ALTER\t")
+        || upper.starts_with("ALTER\n")
+        || upper.starts_with("ALTER\r"))
     {
         return false;
     }
@@ -303,8 +335,32 @@ pub fn is_compound_ddl(sql: &str) -> bool {
     false
 }
 
-/// Splits a multi-statement SQL script while respecting single quotes, double quotes,
-/// dollar-quoted strings (PostgreSQL `$$`), and `--` / `/* */` comments.
+/// Helper to parse a PostgreSQL dollar-quote tag (`$$` or `$tag$`) starting at `chars[start] == '$'`.
+fn parse_dollar_tag(chars: &[char], start: usize) -> Option<(String, usize)> {
+    if chars.get(start) != Some(&'$') {
+        return None;
+    }
+    let len = chars.len();
+    let mut j = start + 1;
+    if j < len && chars[j] == '$' {
+        return Some(("$$".to_string(), 2));
+    }
+    if j < len && (chars[j].is_ascii_alphabetic() || chars[j] == '_') {
+        j += 1;
+        while j < len && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+            j += 1;
+        }
+        if j < len && chars[j] == '$' {
+            let tag: String = chars[start..=j].iter().collect();
+            return Some((tag, j - start + 1));
+        }
+    }
+    None
+}
+
+/// Splits a multi-statement SQL script while respecting single quotes (including MySQL `\'`),
+/// double quotes, MySQL backticks (`` `a;b` ``), MSSQL brackets (`[a;b]`), PostgreSQL
+/// untagged (`$$`) and tagged (`$tag$`) dollar quotes, and `--` / `#` / `/* */` comments.
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
@@ -314,7 +370,9 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 
     let mut in_single_quote = false;
     let mut in_double_quote = false;
-    let mut in_dollar_quote = false;
+    let mut in_backtick = false;
+    let mut in_bracket = false;
+    let mut dollar_tag: Option<Vec<char>> = None;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
 
@@ -343,6 +401,11 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
         }
         if in_single_quote {
             current.push(ch);
+            if ch == '\\' && next.is_some() {
+                current.push(next.unwrap());
+                i += 2;
+                continue;
+            }
             if ch == '\'' {
                 if next == Some('\'') {
                     current.push('\'');
@@ -367,14 +430,43 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        if in_dollar_quote {
+        if in_backtick {
             current.push(ch);
-            if ch == '$' && next == Some('$') {
-                current.push('$');
-                in_dollar_quote = false;
-                i += 2;
+            if ch == '`' {
+                if next == Some('`') {
+                    current.push('`');
+                    i += 2;
+                    continue;
+                }
+                in_backtick = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_bracket {
+            current.push(ch);
+            if ch == ']' {
+                if next == Some(']') {
+                    current.push(']');
+                    i += 2;
+                    continue;
+                }
+                in_bracket = false;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(ref tag) = dollar_tag {
+            let tlen = tag.len();
+            if i + tlen <= len && &chars[i..i + tlen] == tag.as_slice() {
+                for c in tag {
+                    current.push(*c);
+                }
+                i += tlen;
+                dollar_tag = None;
                 continue;
             }
+            current.push(ch);
             i += 1;
             continue;
         }
@@ -384,6 +476,12 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
             current.push(ch);
             current.push('-');
             i += 2;
+            continue;
+        }
+        if ch == '#' {
+            in_line_comment = true;
+            current.push(ch);
+            i += 1;
             continue;
         }
         if ch == '/' && next == Some('*') {
@@ -405,12 +503,25 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        if ch == '$' && next == Some('$') {
-            in_dollar_quote = true;
-            current.push('$');
-            current.push('$');
-            i += 2;
+        if ch == '`' {
+            in_backtick = true;
+            current.push(ch);
+            i += 1;
             continue;
+        }
+        if ch == '[' {
+            in_bracket = true;
+            current.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == '$' {
+            if let Some((tag, consumed)) = parse_dollar_tag(&chars, i) {
+                current.push_str(&tag);
+                dollar_tag = Some(tag.chars().collect());
+                i += consumed;
+                continue;
+            }
         }
 
         if ch == ';' {
@@ -433,6 +544,128 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
     }
 
     statements
+}
+
+/// Splits MySQL scripts supporting `DELIMITER <token>` directives as well as single compound DDL.
+pub fn split_mysql_statements(sql: &str) -> Vec<String> {
+    let has_delimiter = sql.lines().any(|line| {
+        let t = line.trim();
+        t.len() > 10 && t[..10].eq_ignore_ascii_case("DELIMITER ")
+    });
+
+    if !has_delimiter {
+        if is_compound_ddl(sql) {
+            let trimmed = sql.trim();
+            return if trimmed.is_empty() {
+                Vec::new()
+            } else {
+                vec![trimmed.to_string()]
+            };
+        }
+        return split_sql_statements(sql);
+    }
+
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut delimiter = ";".to_string();
+
+    for line in sql.lines() {
+        let trimmed = line.trim();
+        if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("DELIMITER ") {
+            let next_delim = trimmed[10..].trim();
+            if !next_delim.is_empty() {
+                let pending = current.trim().to_string();
+                if !pending.is_empty() {
+                    statements.push(pending);
+                }
+                current.clear();
+                delimiter = next_delim.to_string();
+                continue;
+            }
+        }
+
+        if delimiter == ";" {
+            current.push_str(line);
+            current.push('\n');
+            if trimmed.ends_with(';') && !is_compound_ddl(&current) {
+                let mut parts = split_sql_statements(&current);
+                statements.append(&mut parts);
+                current.clear();
+            }
+        } else if let Some(before) = trimmed.strip_suffix(&delimiter) {
+            if !before.trim().is_empty() {
+                current.push_str(before);
+                current.push('\n');
+            }
+            let stmt = current.trim().to_string();
+            if !stmt.is_empty() {
+                statements.push(stmt);
+            }
+            current.clear();
+        } else {
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+
+    let trailing = current.trim().to_string();
+    if !trailing.is_empty() {
+        if delimiter == ";" && !is_compound_ddl(&trailing) {
+            statements.extend(split_sql_statements(&trailing));
+        } else {
+            statements.push(trailing);
+        }
+    }
+
+    statements
+}
+
+/// Splits MSSQL T-SQL scripts on standalone `GO` batch separator lines while preserving
+/// compound DDL (`CREATE PROCEDURE/FUNCTION/TRIGGER`) intact.
+pub fn split_mssql_batches(sql: &str) -> Vec<String> {
+    let mut batches = Vec::new();
+    let mut current = String::new();
+
+    for line in sql.lines() {
+        let trimmed = line.trim();
+        let is_go = {
+            let upper = trimmed.to_ascii_uppercase();
+            upper == "GO"
+                || (upper.starts_with("GO ")
+                    && upper[3..]
+                        .trim()
+                        .chars()
+                        .all(|c| c.is_ascii_digit()))
+                || upper.starts_with("GO--")
+                || upper.starts_with("GO --")
+        };
+
+        if is_go {
+            let batch = current.trim().to_string();
+            if !batch.is_empty() {
+                batches.push(batch);
+            }
+            current.clear();
+        } else {
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+
+    let trailing = current.trim().to_string();
+    if !trailing.is_empty() {
+        batches.push(trailing);
+    }
+
+    let mut result = Vec::new();
+    for batch in batches {
+        if is_compound_ddl(&batch) {
+            result.push(batch);
+        } else {
+            result.extend(split_sql_statements(&batch));
+        }
+    }
+    result
 }
 
 /// Builds WHERE clause from Visual Filter Builder conditions.
@@ -710,7 +943,10 @@ pub fn generate_table_design_ddl(engine: DbEngine, draft: &TableDesignDraft) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::is_compound_ddl;
+    use super::{
+        is_compound_ddl, split_mssql_batches, split_mysql_statements, split_sql_statements,
+    };
+    use crate::drivers::postgres::parse_pg_function_arguments;
 
     #[test]
     fn detects_compound_routine_ddl() {
@@ -735,5 +971,56 @@ mod tests {
         assert!(!is_compound_ddl(
             "CREATE VIEW v_test AS SELECT function_name FROM procs;"
         ));
+    }
+
+    #[test]
+    fn splits_pg_tagged_dollar_quotes_and_dialect_identifiers() {
+        let pg_sql = "CREATE OR REPLACE FUNCTION f() RETURNS void AS $body$\nBEGIN\n  PERFORM 1; PERFORM 2;\nEND;\n$body$ LANGUAGE plpgsql;\nSELECT f();";
+        let stmts = split_sql_statements(pg_sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("$body$"));
+        assert_eq!(stmts[1], "SELECT f()");
+
+        let mysql_sql = "SELECT 'it\\'s;fine', `col;name` FROM t # comment ; ignored\n; SELECT 2;";
+        let m_stmts = split_sql_statements(mysql_sql);
+        assert_eq!(m_stmts.len(), 2);
+
+        let mssql_sql = "SELECT [a;b] FROM [dbo].[t;1]; SELECT 2;";
+        let ms_stmts = split_sql_statements(mssql_sql);
+        assert_eq!(ms_stmts.len(), 2);
+        assert!(ms_stmts[0].contains("[a;b]"));
+    }
+
+    #[test]
+    fn splits_mysql_delimiter_and_mssql_go_batches() {
+        let mysql_script = "DELIMITER //\nCREATE PROCEDURE p1()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND //\nDELIMITER ;\nCALL p1();";
+        let stmts = split_mysql_statements(mysql_script);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("CREATE PROCEDURE p1()"));
+        assert_eq!(stmts[1], "CALL p1()");
+
+        let mssql_script = "CREATE OR ALTER PROCEDURE dbo.p1 AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND\nGO\nEXEC dbo.p1;";
+        let batches = split_mssql_batches(mssql_script);
+        assert_eq!(batches.len(), 2);
+        assert!(batches[0].contains("SELECT 2;"));
+        assert_eq!(batches[1], "EXEC dbo.p1");
+    }
+
+    #[test]
+    fn parses_pg_function_arguments() {
+        let args = parse_pg_function_arguments(
+            "p_id integer, INOUT p_name character varying DEFAULT 'a, b'::text, OUT total numeric(10, 2)",
+        );
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].name, "p_id");
+        assert_eq!(args[0].mode, "IN");
+        assert_eq!(args[0].data_type, "integer");
+        assert_eq!(args[1].name, "p_name");
+        assert_eq!(args[1].mode, "INOUT");
+        assert_eq!(args[1].data_type, "character varying");
+        assert_eq!(args[1].default_value.as_deref(), Some("'a, b'::text"));
+        assert_eq!(args[2].name, "total");
+        assert_eq!(args[2].mode, "OUT");
+        assert_eq!(args[2].data_type, "numeric(10, 2)");
     }
 }

@@ -242,6 +242,42 @@ pub struct TableMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RoutineParameter {
+    pub name: String,
+    pub mode: String, // "IN" | "OUT" | "INOUT" | "VARIADIC" | "TABLE"
+    pub data_type: String,
+    pub default_value: Option<String>,
+    pub position: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineSignature {
+    pub name: String,
+    pub schema: Option<String>,
+    pub kind: ObjectKind,
+    pub return_type: Option<String>,
+    pub language: Option<String>,
+    pub parameters: Vec<RoutineParameter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveObjectDdlRequest {
+    pub connection_id: String,
+    pub database: Option<String>,
+    pub schema: Option<String>,
+    pub name: String,
+    pub kind: ObjectKind,
+    pub is_new: bool,
+    pub ddl: String,
+    pub original_name: Option<String>,
+    #[serde(default)]
+    pub confirmed_production: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilterCondition {
     pub column: String,
     pub operator: String, // "=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IN", "IS NULL", "IS NOT NULL", "BETWEEN"

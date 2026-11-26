@@ -1,6 +1,6 @@
 use crate::drivers::{
     build_order_clause, build_staged_change_sql, build_where_clause, generate_table_design_ddl,
-    is_compound_ddl, qualified_table, split_sql_statements, SqlDriver,
+    qualified_table, split_mssql_batches, strip_leading_sql_comments, SqlDriver,
 };
 use crate::error::{DbaError, Result};
 use crate::models::*;
@@ -872,12 +872,13 @@ impl SqlDriver for MssqlDriver {
             }
         }
 
-        let statements = split_sql_statements(sql);
+        let statements = split_mssql_batches(sql);
         let mut result_sets = Vec::new();
 
         for stmt in statements {
             let st_start = Instant::now();
-            let upper = stmt.trim().to_uppercase();
+            let stripped = strip_leading_sql_comments(&stmt);
+            let upper = stripped.to_uppercase();
             let returns_rows = upper.starts_with("SELECT")
                 || upper.starts_with("WITH")
                 || upper.starts_with("EXEC")
@@ -1051,17 +1052,7 @@ impl SqlDriver for MssqlDriver {
 
     async fn execute_ddl(&self, database: Option<&str>, ddl: &str) -> Result<()> {
         let mut client = self.open_client(database).await?;
-        if is_compound_ddl(ddl) {
-            let trimmed = ddl.trim();
-            if !trimmed.is_empty() {
-                client
-                    .execute(trimmed, &[])
-                    .await
-                    .map_err(map_mssql_error)?;
-            }
-            return Ok(());
-        }
-        for stmt in split_sql_statements(ddl) {
+        for stmt in split_mssql_batches(ddl) {
             client
                 .execute(&stmt, &[])
                 .await
@@ -1296,5 +1287,174 @@ impl SqlDriver for MssqlDriver {
                 kind
             ))),
         }
+    }
+
+    async fn get_routine_parameters(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<RoutineSignature> {
+        let sc = self.effective_schema(schema);
+        let mut client = self.open_client(database).await?;
+        let stream = client
+            .query(
+                "SELECT
+                    p.parameter_id,
+                    p.name,
+                    t.name AS type_name,
+                    CAST(p.max_length AS INT) AS max_length,
+                    CAST(p.precision AS INT) AS prec,
+                    CAST(p.scale AS INT) AS scl,
+                    p.is_output,
+                    p.has_default_value,
+                    CAST(p.default_value AS NVARCHAR(4000)) AS default_val
+                 FROM sys.parameters p
+                 JOIN sys.types t ON p.user_type_id = t.user_type_id
+                 JOIN sys.objects o ON p.object_id = o.object_id
+                 JOIN sys.schemas s ON o.schema_id = s.schema_id
+                 WHERE s.name = @P1 AND o.name = @P2
+                 ORDER BY p.parameter_id",
+                &[&sc, &name],
+            )
+            .await
+            .map_err(map_mssql_error)?;
+        let rows = stream.into_first_result().await.map_err(map_mssql_error)?;
+
+        let mut return_type: Option<String> = None;
+        let mut parameters = Vec::new();
+
+        for r in rows {
+            let param_id = r.get::<i32, _>(0).unwrap_or(0);
+            let pname = r.get::<&str, _>(1).unwrap_or("").to_string();
+            let base_type = r.get::<&str, _>(2).unwrap_or("nvarchar").to_string();
+            let max_len = r.get::<i32, _>(3).unwrap_or(0);
+            let prec = r.get::<i32, _>(4).unwrap_or(0);
+            let scl = r.get::<i32, _>(5).unwrap_or(0);
+            let is_output = r.get::<bool, _>(6).unwrap_or(false);
+            let has_default = r.get::<bool, _>(7).unwrap_or(false);
+            let default_val = r.get::<&str, _>(8).map(|s| s.to_string());
+
+            let formatted_type = format_mssql_param_type(&base_type, max_len, prec, scl);
+            if param_id == 0 {
+                return_type = Some(formatted_type);
+            } else {
+                parameters.push(RoutineParameter {
+                    name: pname,
+                    mode: if is_output {
+                        "OUT".to_string()
+                    } else {
+                        "IN".to_string()
+                    },
+                    data_type: formatted_type,
+                    default_value: if has_default { default_val } else { None },
+                    position: param_id,
+                });
+            }
+        }
+
+        Ok(RoutineSignature {
+            name: name.to_string(),
+            schema: Some(sc.to_string()),
+            kind,
+            return_type,
+            language: Some("T-SQL".to_string()),
+            parameters,
+        })
+    }
+
+    async fn save_object_ddl(&self, req: &SaveObjectDdlRequest) -> Result<()> {
+        let sc = self.effective_schema(req.schema.as_deref());
+        let batches = split_mssql_batches(&req.ddl);
+        if batches.is_empty() {
+            return Err(DbaError::Database {
+                message: "Object DDL cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+
+        let mut client = self.open_client(req.database.as_deref()).await?;
+
+        // Check if first batch is plain `CREATE <KIND>` (not `CREATE OR ALTER` and not `ALTER`)
+        let first_upper = strip_leading_sql_comments(&batches[0]).to_ascii_uppercase();
+        let needs_drop_if_exists = !req.is_new
+            && first_upper.starts_with("CREATE ")
+            && !first_upper.starts_with("CREATE OR ALTER ");
+
+        client
+            .execute("BEGIN TRANSACTION", &[])
+            .await
+            .map_err(map_mssql_error)?;
+
+        let res: Result<()> = async {
+            if needs_drop_if_exists {
+                let target_name = req
+                    .original_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(req.name.trim());
+                let fq = qualified_table(DbEngine::Mssql, Some(sc), target_name);
+                let kw = match req.kind {
+                    ObjectKind::View | ObjectKind::MaterializedView => "VIEW",
+                    ObjectKind::Procedure => "PROCEDURE",
+                    ObjectKind::Function => "FUNCTION",
+                    ObjectKind::Trigger => "TRIGGER",
+                    _ => "VIEW",
+                };
+                client
+                    .execute(format!("DROP {} IF EXISTS {}", kw, fq), &[])
+                    .await
+                    .map_err(map_mssql_error)?;
+            }
+
+            for batch in &batches {
+                client
+                    .execute(batch, &[])
+                    .await
+                    .map_err(map_mssql_error)?;
+            }
+            Ok(())
+        }
+        .await;
+
+        match res {
+            Ok(()) => {
+                client
+                    .execute("COMMIT TRANSACTION", &[])
+                    .await
+                    .map_err(map_mssql_error)?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = client.execute("ROLLBACK TRANSACTION", &[]).await;
+                Err(e)
+            }
+        }
+    }
+}
+
+fn format_mssql_param_type(base: &str, max_len: i32, prec: i32, scale: i32) -> String {
+    let lower = base.to_ascii_lowercase();
+    match lower.as_str() {
+        "nvarchar" | "nchar" => {
+            if max_len < 0 {
+                format!("{}(MAX)", base)
+            } else {
+                format!("{}({})", base, max_len / 2)
+            }
+        }
+        "varchar" | "char" | "varbinary" | "binary" => {
+            if max_len < 0 {
+                format!("{}(MAX)", base)
+            } else {
+                format!("{}({})", base, max_len)
+            }
+        }
+        "decimal" | "numeric" => format!("{}({}, {})", base, prec, scale),
+        _ => base.to_string(),
     }
 }

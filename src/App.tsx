@@ -29,12 +29,14 @@ import { DataTransferWizard } from "./components/DataTransferWizard";
 import { DataViewer } from "./components/DataViewer";
 import { DumpBackupWizard } from "./components/DumpBackupWizard";
 import { ErDiagramDesigner } from "./components/ErDiagramDesigner";
+import { ExecuteRoutineModal } from "./components/ExecuteRoutineModal";
 import { ImportExportWizard } from "./components/ImportExportWizard";
 import { MongoCollectionDesigner } from "./components/MongoCollectionDesigner";
 import { MongoQueryEditor } from "./components/MongoQueryEditor";
 import { MongoViewer } from "./components/MongoViewer";
 import { NavicatToolbar } from "./components/NavicatToolbar";
 import { ObjectExplorer } from "./components/ObjectExplorer";
+import { ObjectScriptDesigner } from "./components/ObjectScriptDesigner";
 import { ObjectsBrowser } from "./components/ObjectsBrowser";
 import { QueryEditor } from "./components/QueryEditor";
 import { RightInspector } from "./components/RightInspector";
@@ -53,6 +55,8 @@ const TabContent: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
       return <QueryEditor tab={tab} />;
     case "designer":
       return <TableDesigner tab={tab} />;
+    case "object_designer":
+      return <ObjectScriptDesigner tab={tab} />;
     case "mongo_collection":
       return <MongoViewer tab={tab} />;
     case "mongo_query":
@@ -459,6 +463,7 @@ export function App() {
                     {t.kind === "table" && <Table2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
                     {t.kind === "query" && <FileCode2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     {t.kind === "designer" && <Wrench className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                    {t.kind === "object_designer" && <Wrench className="w-3.5 h-3.5 text-orange-400 shrink-0" />}
                     {t.kind === "mongo_collection" && <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     {t.kind === "mongo_query" && <Braces className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     {t.kind === "mongo_designer" && <Wrench className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
@@ -703,6 +708,7 @@ export function App() {
       <ConnectionModal />
       <CommandPalette />
       <SafetyConfirmModal />
+      <ExecuteRoutineModal />
       <ToastContainer />
     </div>
   );

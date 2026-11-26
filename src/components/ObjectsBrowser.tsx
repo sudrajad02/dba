@@ -31,7 +31,6 @@ import {
   Zap,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
-import { buildExecuteRoutineSql, buildNewObjectTemplateSql } from "../lib/objectTemplates";
 import {
   buildTabFromSavedQuery,
   formatSavedQueryFilename,
@@ -70,6 +69,7 @@ export const ObjectsBrowser: React.FC = () => {
     updateTab,
     openConnectionModal,
     openSafetyModal,
+    openExecuteRoutineModal,
     inspectDatabaseObject,
     addLog,
     refreshSavedQueries,
@@ -241,12 +241,13 @@ export const ObjectsBrowser: React.FC = () => {
       trigger: "New Trigger",
     };
     openTab({
-      kind: "query",
+      kind: "object_designer",
       title: labelMap[kind],
       connectionId: conn.id,
       database: browserContext.database,
       schema: browserContext.schema ?? undefined,
-      sql: buildNewObjectTemplateSql(conn.engine, kind, browserContext.schema),
+      objectKind: kind,
+      isNewObject: true,
     });
   };
 
@@ -337,6 +338,25 @@ export const ObjectsBrowser: React.FC = () => {
 
   const openObjectDdlInEditor = async (obj: DatabaseObject) => {
     if (!conn || !browserContext.database) return;
+    if (
+      obj.kind === "view" ||
+      obj.kind === "materialized_view" ||
+      obj.kind === "function" ||
+      obj.kind === "procedure" ||
+      obj.kind === "trigger"
+    ) {
+      openTab({
+        kind: "object_designer",
+        title: `Design: ${obj.name}`,
+        connectionId: conn.id,
+        database: browserContext.database,
+        schema: browserContext.schema ?? undefined,
+        objectKind: obj.kind,
+        objectName: obj.name,
+        isNewObject: false,
+      });
+      return;
+    }
     try {
       const ddl = await api.getObjectDdl(
         conn.id,
@@ -420,13 +440,12 @@ export const ObjectsBrowser: React.FC = () => {
 
   const handleExecuteRoutine = (obj: DatabaseObject) => {
     if (!conn || !browserContext.database) return;
-    openTab({
-      kind: "query",
-      title: `Execute: ${obj.name}`,
+    openExecuteRoutineModal({
       connectionId: conn.id,
       database: browserContext.database,
       schema: browserContext.schema ?? undefined,
-      sql: buildExecuteRoutineSql(conn.engine, obj.name, obj.kind, browserContext.schema),
+      name: obj.name,
+      kind: obj.kind === "procedure" ? "procedure" : "function",
     });
   };
 

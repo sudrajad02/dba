@@ -610,6 +610,42 @@ impl ConnectionManager {
         drv.get_object_ddl(database, schema, name, kind).await
     }
 
+    pub async fn get_routine_parameters(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<RoutineSignature> {
+        let (_, drv) = self.get_active(connection_id).await?;
+        drv.get_routine_parameters(database, schema, name, kind)
+            .await
+    }
+
+    pub async fn save_object_ddl(&self, req: &SaveObjectDdlRequest) -> Result<()> {
+        if req.ddl.trim().is_empty() {
+            return Err(DbaError::Database {
+                message: "Object DDL cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+        let (profile, drv) = self.get_active(&req.connection_id).await?;
+        if profile.read_only {
+            return Err(DbaError::ReadOnlyBlocked(
+                "Connection is in Read-Only Mode".into(),
+            ));
+        }
+        if matches!(profile.environment, EnvironmentTag::Production) && !req.confirmed_production {
+            return Err(DbaError::SafetyGuardBlocked(
+                "Production confirmation required before saving object DDL".into(),
+            ));
+        }
+        drv.save_object_ddl(req).await
+    }
+
     pub async fn create_database(
         &self,
         connection_id: &str,

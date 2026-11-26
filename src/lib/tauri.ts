@@ -55,7 +55,9 @@ import type {
   QueryHistoryEntry,
   QueryResultSet,
   ReverseEngineerRequest,
+  RoutineSignature,
   SafetyCheckResult,
+  SaveObjectDdlRequest,
   SavedQuery,
   SchemaInfo,
   SqlDumpRequest,
@@ -299,6 +301,24 @@ export const api = {
       name,
       kind,
     }),
+
+  getRoutineParameters: (
+    connectionId: string,
+    name: string,
+    kind: ObjectKind,
+    database?: string,
+    schema?: string
+  ) =>
+    invoke<RoutineSignature>("get_routine_parameters", {
+      connectionId,
+      database,
+      schema,
+      name,
+      kind,
+    }),
+
+  saveObjectDdl: (request: SaveObjectDdlRequest) =>
+    invoke<void>("save_object_ddl", { request }),
 
   searchQueryHistory: (query?: string, limit = 100) =>
     invoke<QueryHistoryEntry[]>("search_query_history", { query, limit }),

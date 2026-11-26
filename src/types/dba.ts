@@ -142,6 +142,35 @@ export interface TableMetadata {
   ddl?: string | null;
 }
 
+export interface RoutineParameter {
+  name: string;
+  mode: string;
+  dataType: string;
+  defaultValue?: string | null;
+  position: number;
+}
+
+export interface RoutineSignature {
+  name: string;
+  schema?: string | null;
+  kind: ObjectKind;
+  returnType?: string | null;
+  language?: string | null;
+  parameters: RoutineParameter[];
+}
+
+export interface SaveObjectDdlRequest {
+  connectionId: string;
+  database?: string | null;
+  schema?: string | null;
+  name: string;
+  kind: ObjectKind;
+  isNew: boolean;
+  ddl: string;
+  originalName?: string | null;
+  confirmedProduction: boolean;
+}
+
 export interface FilterCondition {
   column: string;
   operator: string;

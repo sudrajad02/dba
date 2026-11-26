@@ -1369,4 +1369,335 @@ impl SqlDriver for PostgresDriver {
             ))),
         }
     }
+
+    async fn get_routine_parameters(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<RoutineSignature> {
+        let client = self.get_client(database).await?;
+        let schema_name = schema
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("public");
+        let prokind_filter = match kind {
+            ObjectKind::Procedure => "p",
+            _ => "f",
+        };
+        let row = client
+            .query_opt(
+                "SELECT
+                    pg_get_function_arguments(p.oid),
+                    CASE WHEN p.prokind = 'p' THEN NULL ELSE pg_get_function_result(p.oid) END,
+                    l.lanname
+                 FROM pg_proc p
+                 JOIN pg_namespace n ON n.oid = p.pronamespace
+                 LEFT JOIN pg_language l ON l.oid = p.prolang
+                 WHERE n.nspname = $1 AND p.proname = $2 AND p.prokind::text = $3
+                 ORDER BY p.oid
+                 LIMIT 1",
+                &[&schema_name, &name, &prokind_filter],
+            )
+            .await
+            .map_err(map_pg_error)?;
+
+        let row = match row {
+            Some(r) => r,
+            None => {
+                // Fallback without prokind filter (e.g. older PG or aggregate/window)
+                client
+                    .query_opt(
+                        "SELECT
+                            pg_get_function_arguments(p.oid),
+                            pg_get_function_result(p.oid),
+                            l.lanname
+                         FROM pg_proc p
+                         JOIN pg_namespace n ON n.oid = p.pronamespace
+                         LEFT JOIN pg_language l ON l.oid = p.prolang
+                         WHERE n.nspname = $1 AND p.proname = $2
+                         ORDER BY p.oid
+                         LIMIT 1",
+                        &[&schema_name, &name],
+                    )
+                    .await
+                    .map_err(map_pg_error)?
+                    .ok_or_else(|| DbaError::Database {
+                        message: format!("Routine '{}.{}' not found", schema_name, name),
+                        code: None,
+                        detail: None,
+                        line: None,
+                    })?
+            }
+        };
+
+        let args_str: String = row.get(0);
+        let return_type: Option<String> = row.get(1);
+        let language: Option<String> = row.get(2);
+        let parameters = parse_pg_function_arguments(&args_str);
+
+        Ok(RoutineSignature {
+            name: name.to_string(),
+            schema: Some(schema_name.to_string()),
+            kind,
+            return_type,
+            language,
+            parameters,
+        })
+    }
+
+    async fn save_object_ddl(&self, req: &SaveObjectDdlRequest) -> Result<()> {
+        let client = self.get_client(req.database.as_deref()).await?;
+        let schema_name = req
+            .schema
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("public");
+        let target_name = req
+            .original_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(req.name.trim());
+
+        let statements = split_sql_statements(&req.ddl);
+        if statements.is_empty() {
+            return Err(DbaError::Database {
+                message: "Object DDL cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+
+        client.batch_execute("BEGIN").await.map_err(map_pg_error)?;
+
+        let res: Result<()> = async {
+            if !req.is_new {
+                match req.kind {
+                    ObjectKind::Trigger => {
+                        let row = client
+                            .query_opt(
+                                "SELECT c.relname
+                                 FROM pg_trigger t
+                                 JOIN pg_class c ON t.tgrelid = c.oid
+                                 JOIN pg_namespace n ON c.relnamespace = n.oid
+                                 WHERE t.tgname = $1 AND n.nspname = $2 AND NOT t.tgisinternal
+                                 LIMIT 1",
+                                &[&target_name, &schema_name],
+                            )
+                            .await
+                            .map_err(map_pg_error)?;
+                        if let Some(r) = row {
+                            let table_name: String = r.get(0);
+                            let drop_sql = format!(
+                                "DROP TRIGGER IF EXISTS {} ON {}",
+                                quote_ident(DbEngine::Postgres, target_name),
+                                qualified_table(DbEngine::Postgres, Some(schema_name), &table_name)
+                            );
+                            client.execute(&drop_sql, &[]).await.map_err(map_pg_error)?;
+                        }
+                    }
+                    ObjectKind::MaterializedView => {
+                        let drop_sql = format!(
+                            "DROP MATERIALIZED VIEW IF EXISTS {}",
+                            qualified_table(DbEngine::Postgres, Some(schema_name), target_name)
+                        );
+                        client.execute(&drop_sql, &[]).await.map_err(map_pg_error)?;
+                    }
+                    _ => {}
+                }
+            }
+
+            for stmt in &statements {
+                client.batch_execute(stmt).await.map_err(map_pg_error)?;
+            }
+            Ok(())
+        }
+        .await;
+
+        match res {
+            Ok(()) => {
+                client.batch_execute("COMMIT").await.map_err(map_pg_error)?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = client.batch_execute("ROLLBACK").await;
+                Err(e)
+            }
+        }
+    }
+}
+
+pub(crate) fn parse_pg_function_arguments(args_str: &str) -> Vec<RoutineParameter> {
+    let trimmed = args_str.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    // Split top-level commas respecting quotes and parentheses
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+        if in_single {
+            current.push(ch);
+            if ch == '\'' {
+                if next == Some('\'') {
+                    current.push('\'');
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            current.push(ch);
+            if ch == '"' {
+                if next == Some('"') {
+                    current.push('"');
+                    i += 2;
+                    continue;
+                }
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\'' => {
+                in_single = true;
+                current.push(ch);
+            }
+            '"' => {
+                in_double = true;
+                current.push(ch);
+            }
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth = (depth - 1).max(0);
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let p = current.trim().to_string();
+                if !p.is_empty() {
+                    parts.push(p);
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+        i += 1;
+    }
+    let last = current.trim().to_string();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+
+    let mut params = Vec::new();
+    for (idx, part) in parts.into_iter().enumerate() {
+        // Extract optional DEFAULT clause (case-insensitive outside quotes)
+        let (head, default_value) = split_default_clause(&part);
+        let mut rest = head.trim();
+
+        // Check leading mode token
+        let mut mode = "IN".to_string();
+        let upper_rest = rest.to_ascii_uppercase();
+        for candidate in ["INOUT ", "OUT ", "IN ", "VARIADIC ", "TABLE "] {
+            if upper_rest.starts_with(candidate) {
+                mode = candidate.trim().to_string();
+                rest = rest[candidate.len()..].trim();
+                break;
+            }
+        }
+
+        // Now `rest` is either `"param_name" type...`, `param_name type...`, or just `type...`
+        let (name, data_type) = if rest.starts_with('"') {
+            if let Some(end_q) = rest[1..].find('"') {
+                let n = rest[1..1 + end_q].to_string();
+                let dt = rest[2 + end_q..].trim().to_string();
+                (n, dt)
+            } else {
+                (format!("arg{}", idx + 1), rest.to_string())
+            }
+        } else if let Some(space_idx) = rest.find(char::is_whitespace) {
+            let first = &rest[..space_idx];
+            let second = rest[space_idx..].trim();
+            // Multi-word SQL types without parameter name (e.g. "character varying", "double precision", "timestamp without time zone")
+            let first_lower = first.to_ascii_lowercase();
+            let second_lower = second.to_ascii_lowercase();
+            let is_unnamed_multiword = matches!(
+                first_lower.as_str(),
+                "character" | "double" | "timestamp" | "time" | "bit" | "unsigned"
+            ) && (second_lower.starts_with("varying")
+                || second_lower.starts_with("precision")
+                || second_lower.starts_with("with")
+                || second_lower.starts_with("without"));
+            if is_unnamed_multiword || second.is_empty() {
+                (format!("arg{}", idx + 1), rest.to_string())
+            } else {
+                (first.to_string(), second.to_string())
+            }
+        } else {
+            (format!("arg{}", idx + 1), rest.to_string())
+        };
+
+        params.push(RoutineParameter {
+            name,
+            mode,
+            data_type,
+            default_value,
+            position: (idx + 1) as i32,
+        });
+    }
+    params
+}
+
+fn split_default_clause(s: &str) -> (&str, Option<String>) {
+    let bytes = s.as_bytes();
+    let mut in_single = false;
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\'' {
+                if bytes.get(i + 1) == Some(&b'\'') {
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'(' => depth += 1,
+            b')' => depth = (depth - 1).max(0),
+            b' ' | b'\t' if depth == 0 => {
+                let tail = &s[i..];
+                let trimmed = tail.trim_start();
+                if trimmed.len() > 8 && trimmed[..8].eq_ignore_ascii_case("DEFAULT ") {
+                    return (&s[..i], Some(trimmed[8..].trim().to_string()));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    (s, None)
 }

@@ -1,6 +1,6 @@
 use crate::drivers::{
-    build_order_clause, build_staged_change_sql, build_where_clause, is_compound_ddl,
-    qualified_table, quote_ident, split_sql_statements, SqlDriver,
+    build_order_clause, build_staged_change_sql, build_where_clause, qualified_table, quote_ident,
+    split_mysql_statements, strip_leading_sql_comments, SqlDriver,
 };
 use crate::error::{DbaError, Result};
 use crate::models::*;
@@ -541,20 +541,95 @@ impl SqlDriver for MysqlDriver {
             active.insert(query_id.to_string(), conn_id);
         }
 
-        let statements = split_sql_statements(sql);
+        let statements = split_mysql_statements(sql);
         let mut result_sets = Vec::new();
 
         for stmt_sql in statements {
             let stmt_start = Instant::now();
-            let upper = stmt_sql.trim_start().to_uppercase();
-            let expects_rows = upper.starts_with("SELECT")
+            let stripped = strip_leading_sql_comments(&stmt_sql);
+            let upper = stripped.to_uppercase();
+            let is_call = upper.starts_with("CALL ")
+                || upper.starts_with("CALL\t")
+                || upper.starts_with("CALL\n")
+                || upper.starts_with("CALL`");
+            let expects_rows = is_call
+                || upper.starts_with("SELECT")
                 || upper.starts_with("SHOW")
                 || upper.starts_with("DESCRIBE")
-                || upper.starts_with("DESC")
+                || upper.starts_with("DESC ")
+                || upper.starts_with("DESC\t")
                 || upper.starts_with("EXPLAIN")
                 || upper.starts_with("WITH");
 
-            if expects_rows {
+            if is_call {
+                match conn.query_iter(&stmt_sql).await {
+                    Ok(mut result) => {
+                        let mut pushed_any = false;
+                        while !result.is_empty() {
+                            let cols_meta: Vec<ResultColumn> = result
+                                .columns()
+                                .map(|cols| {
+                                    cols.iter()
+                                        .map(|c| ResultColumn {
+                                            name: c.name_str().to_string(),
+                                            data_type: format!("{:?}", c.column_type()),
+                                            is_primary_key: false,
+                                            fk_target: None,
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let affected = result.affected_rows();
+                            let rows: Vec<Row> = match result.collect().await {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    let mut active = self.active_conn_ids.lock().await;
+                                    active.remove(query_id);
+                                    return Err(map_mysql_error(e));
+                                }
+                            };
+                            if !cols_meta.is_empty() || !rows.is_empty() {
+                                let data_rows: Vec<Vec<serde_json::Value>> =
+                                    rows.into_iter().map(mysql_row_to_json).collect();
+                                result_sets.push(QueryResultSet {
+                                    columns: cols_meta,
+                                    rows: data_rows,
+                                    rows_affected: None,
+                                    total_count: None,
+                                    execution_ms: stmt_start.elapsed().as_millis() as u64,
+                                    statement: stmt_sql.clone(),
+                                });
+                                pushed_any = true;
+                            } else if !pushed_any {
+                                result_sets.push(QueryResultSet {
+                                    columns: Vec::new(),
+                                    rows: Vec::new(),
+                                    rows_affected: Some(affected),
+                                    total_count: None,
+                                    execution_ms: stmt_start.elapsed().as_millis() as u64,
+                                    statement: stmt_sql.clone(),
+                                });
+                                pushed_any = true;
+                            }
+                        }
+                        if !pushed_any {
+                            result_sets.push(QueryResultSet {
+                                columns: Vec::new(),
+                                rows: Vec::new(),
+                                rows_affected: Some(0),
+                                total_count: None,
+                                execution_ms: stmt_start.elapsed().as_millis() as u64,
+                                statement: stmt_sql,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        let mut active = self.active_conn_ids.lock().await;
+                        active.remove(query_id);
+                        return Err(map_mysql_error(e));
+                    }
+                }
+            } else if expects_rows {
                 match conn.query::<Row, _>(&stmt_sql).await {
                     Ok(rows) => {
                         let columns: Vec<ResultColumn> = rows
@@ -708,14 +783,7 @@ impl SqlDriver for MysqlDriver {
 
     async fn execute_ddl(&self, database: Option<&str>, ddl: &str) -> Result<()> {
         let mut conn = self.get_conn(database).await?;
-        if is_compound_ddl(ddl) {
-            let trimmed = ddl.trim();
-            if !trimmed.is_empty() {
-                conn.query_drop(trimmed).await.map_err(map_mysql_error)?;
-            }
-            return Ok(());
-        }
-        for stmt in split_sql_statements(ddl) {
+        for stmt in split_mysql_statements(ddl) {
             conn.query_drop(&stmt).await.map_err(map_mysql_error)?;
         }
         Ok(())
@@ -876,6 +944,150 @@ impl SqlDriver for MysqlDriver {
         // Strip DEFINER=`user`@`host` so the DDL executes cleanly on target servers without SUPER privilege
         let cleaned = strip_mysql_definer(&raw_ddl);
         Ok(cleaned)
+    }
+
+    async fn get_routine_parameters(
+        &self,
+        database: Option<&str>,
+        schema: Option<&str>,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<RoutineSignature> {
+        let db = self.effective_db(database, schema).unwrap_or("");
+        let mut conn = self.get_conn(Some(db)).await?;
+        let routine_type = match kind {
+            ObjectKind::Procedure => "PROCEDURE",
+            _ => "FUNCTION",
+        };
+        let rows: Vec<(i32, Option<String>, Option<String>, Option<String>)> = conn
+            .exec(
+                "SELECT ORDINAL_POSITION, PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER
+                 FROM information_schema.PARAMETERS
+                 WHERE SPECIFIC_SCHEMA = ? AND SPECIFIC_NAME = ? AND ROUTINE_TYPE = ?
+                 ORDER BY ORDINAL_POSITION",
+                (db, name, routine_type),
+            )
+            .await
+            .map_err(map_mysql_error)?;
+
+        let mut return_type: Option<String> = None;
+        let mut parameters = Vec::new();
+        for (pos, mode, pname, dtd) in rows {
+            if pos == 0 {
+                return_type = dtd;
+            } else {
+                parameters.push(RoutineParameter {
+                    name: pname.unwrap_or_else(|| format!("p{}", pos)),
+                    mode: mode.unwrap_or_else(|| "IN".to_string()).to_uppercase(),
+                    data_type: dtd.unwrap_or_else(|| "TEXT".to_string()),
+                    default_value: None,
+                    position: pos,
+                });
+            }
+        }
+
+        Ok(RoutineSignature {
+            name: name.to_string(),
+            schema: if db.is_empty() {
+                None
+            } else {
+                Some(db.to_string())
+            },
+            kind,
+            return_type,
+            language: Some("SQL".to_string()),
+            parameters,
+        })
+    }
+
+    async fn save_object_ddl(&self, req: &SaveObjectDdlRequest) -> Result<()> {
+        let db = self.effective_db(req.database.as_deref(), req.schema.as_deref());
+        let mut conn = self.get_conn(db).await?;
+        let statements = split_mysql_statements(&req.ddl);
+        if statements.is_empty() {
+            return Err(DbaError::Database {
+                message: "Object DDL cannot be empty".into(),
+                code: None,
+                detail: None,
+                line: None,
+            });
+        }
+
+        // For Views, `CREATE OR REPLACE VIEW` is atomic in MySQL; for new objects execute directly
+        if req.is_new || matches!(req.kind, ObjectKind::View) {
+            for stmt in &statements {
+                conn.query_drop(stmt).await.map_err(map_mysql_error)?;
+            }
+            return Ok(());
+        }
+
+        // MySQL Safe Swap for Function, Procedure, Trigger, Event:
+        // 1. Capture existing DDL in memory before dropping
+        let target_name = req
+            .original_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(req.name.trim());
+        let backup_ddl = self
+            .get_object_ddl(req.database.as_deref(), req.schema.as_deref(), target_name, req.kind)
+            .await
+            .ok();
+
+        let keyword = match req.kind {
+            ObjectKind::Function => "FUNCTION",
+            ObjectKind::Procedure => "PROCEDURE",
+            ObjectKind::Trigger => "TRIGGER",
+            ObjectKind::Event => "EVENT",
+            _ => "VIEW",
+        };
+        let fq = qualified_table(DbEngine::Mysql, db, target_name);
+        conn.query_drop(format!("DROP {} IF EXISTS {}", keyword, fq))
+            .await
+            .map_err(map_mysql_error)?;
+
+        for stmt in &statements {
+            if let Err(err) = conn.query_drop(stmt).await {
+                let err_msg = map_mysql_error(err).to_string();
+                if let Some(ref backup) = backup_ddl {
+                    match conn.query_drop(backup).await {
+                        Ok(()) => {
+                            return Err(DbaError::Database {
+                                message: format!(
+                                    "{} (Previous {} definition was automatically restored.)",
+                                    err_msg,
+                                    keyword.to_lowercase()
+                                ),
+                                code: None,
+                                detail: None,
+                                line: None,
+                            });
+                        }
+                        Err(restore_err) => {
+                            return Err(DbaError::Database {
+                                message: format!(
+                                    "{} (WARNING: Auto-restore of previous {} also failed: {})",
+                                    err_msg,
+                                    keyword.to_lowercase(),
+                                    restore_err
+                                ),
+                                code: None,
+                                detail: None,
+                                line: None,
+                            });
+                        }
+                    }
+                }
+                return Err(DbaError::Database {
+                    message: err_msg,
+                    code: None,
+                    detail: None,
+                    line: None,
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 

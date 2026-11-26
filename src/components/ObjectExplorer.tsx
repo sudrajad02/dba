@@ -33,7 +33,6 @@ import {
   Zap,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/tauri";
-import { buildExecuteRoutineSql, buildNewObjectTemplateSql } from "../lib/objectTemplates";
 import {
   buildTabFromSavedQuery,
   formatSavedQueryFilename,
@@ -123,6 +122,7 @@ export const ObjectExplorer: React.FC = () => {
     refreshConnections,
     refreshSavedQueries,
     openSafetyModal,
+    openExecuteRoutineModal,
     inspectDatabaseObject,
     addLog,
     savedQueries,
@@ -345,12 +345,13 @@ export const ObjectExplorer: React.FC = () => {
       trigger: "New Trigger",
     };
     openTab({
-      kind: "query",
+      kind: "object_designer",
       title: labelMap[kind],
       connectionId: conn.id,
       database: db,
       schema,
-      sql: buildNewObjectTemplateSql(conn.engine, kind, schema),
+      objectKind: kind,
+      isNewObject: true,
     });
   };
 
@@ -385,6 +386,25 @@ export const ObjectExplorer: React.FC = () => {
     schema: string | undefined,
     obj: DatabaseObject
   ) => {
+    if (
+      obj.kind === "view" ||
+      obj.kind === "materialized_view" ||
+      obj.kind === "function" ||
+      obj.kind === "procedure" ||
+      obj.kind === "trigger"
+    ) {
+      openTab({
+        kind: "object_designer",
+        title: `Design: ${obj.name}`,
+        connectionId: conn.id,
+        database: db,
+        schema,
+        objectKind: obj.kind,
+        objectName: obj.name,
+        isNewObject: false,
+      });
+      return;
+    }
     try {
       const ddl = await api.getObjectDdl(conn.id, obj.name, obj.kind, db, schema);
       openTab({
@@ -2394,13 +2414,12 @@ export const ObjectExplorer: React.FC = () => {
                   <>
                     <button
                       onClick={() => {
-                        openTab({
-                          kind: "query",
-                          title: `Execute: ${ctxObj.name}`,
+                        openExecuteRoutineModal({
                           connectionId: ctxConn.id,
                           database: db,
                           schema: sc,
-                          sql: buildExecuteRoutineSql(ctxConn.engine, ctxObj.name, ctxObj.kind, sc),
+                          name: ctxObj.name,
+                          kind: ctxObj.kind === "procedure" ? "procedure" : "function",
                         });
                         setCtxMenu(null);
                       }}

@@ -20,6 +20,7 @@ export type TabKind =
   | "table"
   | "query"
   | "designer"
+  | "object_designer"
   | "mongo_collection"
   | "mongo_query"
   | "mongo_designer"
@@ -68,6 +69,9 @@ export interface WorkbenchTab {
     | "structure_sync"
     | "data_sync";
   isNewTable?: boolean;
+  objectKind?: "function" | "procedure" | "trigger" | "view" | "materialized_view";
+  objectName?: string;
+  isNewObject?: boolean;
   initialFilters?: FilterCondition[];
   dirty?: boolean;
 }
@@ -109,6 +113,14 @@ export interface UnsavedCloseModalState {
   message: string;
   dirtyTabTitles: string[];
   onConfirm: () => void;
+}
+
+export interface ExecuteRoutineModalState {
+  connectionId: string;
+  database?: string;
+  schema?: string;
+  name: string;
+  kind: "function" | "procedure";
 }
 
 interface WorkbenchStore {
@@ -222,6 +234,10 @@ interface WorkbenchStore {
 
   unsavedCloseModal: UnsavedCloseModalState | null;
   closeUnsavedCloseModal: () => void;
+
+  executeRoutineModal: ExecuteRoutineModalState | null;
+  openExecuteRoutineModal: (modal: ExecuteRoutineModalState) => void;
+  closeExecuteRoutineModal: () => void;
 
   // Async Actions
   bootstrap: () => Promise<void>;
@@ -894,6 +910,10 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   unsavedCloseModal: null,
   closeUnsavedCloseModal: () => set({ unsavedCloseModal: null }),
+
+  executeRoutineModal: null,
+  openExecuteRoutineModal: (modal) => set({ executeRoutineModal: modal }),
+  closeExecuteRoutineModal: () => set({ executeRoutineModal: null }),
 
   bootstrap: async () => {
     await get().refreshConnections();

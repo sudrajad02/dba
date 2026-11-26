@@ -482,6 +482,40 @@ async fn get_object_ddl(
 }
 
 #[tauri::command]
+async fn get_routine_parameters(
+    state: State<'_, AppState>,
+    connection_id: String,
+    database: Option<String>,
+    schema: Option<String>,
+    name: String,
+    kind: ObjectKind,
+) -> CmdResult<RoutineSignature> {
+    state
+        .manager
+        .get_routine_parameters(
+            &connection_id,
+            database.as_deref(),
+            schema.as_deref(),
+            &name,
+            kind,
+        )
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn save_object_ddl(
+    state: State<'_, AppState>,
+    request: SaveObjectDdlRequest,
+) -> CmdResult<()> {
+    state
+        .manager
+        .save_object_ddl(&request)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 fn search_query_history(
     state: State<'_, AppState>,
     query: Option<String>,
@@ -1147,6 +1181,8 @@ pub fn run() {
             create_schema,
             drop_schema,
             get_object_ddl,
+            get_routine_parameters,
+            save_object_ddl,
             search_query_history,
             list_saved_queries,
             save_query_file,
