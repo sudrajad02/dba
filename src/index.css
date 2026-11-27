@@ -65,11 +65,16 @@
   background: rgba(113, 113, 122, 0.6);
 }
 
-/* Tab bar & ribbon: never show vertical scrollbar; ultra-slim horizontal scroll */
+/* Tab bar & ribbon: never show vertical scrollbar; ultra-slim 3px horizontal scrollbar when overflowing */
 .tab-bar-scroll {
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
+}
+@supports not selector(::-webkit-scrollbar) {
+  .tab-bar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(113, 113, 122, 0.3) transparent;
+  }
 }
 .tab-bar-scroll::-webkit-scrollbar {
   height: 3px;
@@ -79,9 +84,9 @@
   background: transparent;
 }
 .tab-bar-scroll::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: rgba(113, 113, 122, 0.25);
   border-radius: 9999px;
 }
 .tab-bar-scroll:hover::-webkit-scrollbar-thumb {
-  background: rgba(113, 113, 122, 0.45);
+  background: rgba(113, 113, 122, 0.55);
 }

@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeftRight,
   BarChart3,
   Braces,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Database,
   Download,
@@ -46,6 +49,45 @@ import { TableDesigner } from "./components/TableDesigner";
 import { ToastContainer } from "./components/ToastContainer";
 import { VisualQueryBuilder } from "./components/VisualQueryBuilder";
 import { useWorkbenchStore, type WorkbenchTab } from "./store/useWorkbenchStore";
+
+const renderTabIcon = (kind: WorkbenchTab["kind"]) => {
+  switch (kind) {
+    case "objects":
+      return <Database className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
+    case "table":
+      return <Table2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
+    case "query":
+      return <FileCode2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+    case "designer":
+      return <Wrench className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+    case "object_designer":
+      return <Wrench className="w-3.5 h-3.5 text-orange-400 shrink-0" />;
+    case "mongo_collection":
+      return <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+    case "mongo_query":
+      return <Braces className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+    case "mongo_designer":
+      return <Wrench className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+    case "import_export":
+      return <Download className="w-3.5 h-3.5 text-indigo-400 shrink-0" />;
+    case "dump_backup":
+      return <HardDriveDownload className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+    case "data_transfer":
+      return <ArrowLeftRight className="w-3.5 h-3.5 text-teal-400 shrink-0" />;
+    case "sync":
+      return <GitCompare className="w-3.5 h-3.5 text-orange-400 shrink-0" />;
+    case "er_model":
+      return <Network className="w-3.5 h-3.5 text-pink-400 shrink-0" />;
+    case "query_builder":
+      return <Wand2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />;
+    case "automation":
+      return <Clock className="w-3.5 h-3.5 text-lime-400 shrink-0" />;
+    case "charts":
+      return <BarChart3 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />;
+    case "data_gen":
+      return <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+  }
+};
 
 const TabContent: React.FC<{ tab: WorkbenchTab }> = ({ tab }) => {
   switch (tab.kind) {
@@ -119,10 +161,17 @@ export function App() {
     bootstrap,
   } = useWorkbenchStore();
 
-  // Chrome-like tab drag-and-drop & context menu state
+  // Chrome-like tab drag-and-drop, overflow controls & context menu state
   const tabBarRef = useRef<HTMLDivElement | null>(null);
   const tabElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const tabListMenuRef = useRef<HTMLDivElement | null>(null);
   const suppressClickRef = useRef(false);
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const [tabScrollState, setTabScrollState] = useState({
+    overflowing: false,
+    canLeft: false,
+    canRight: false,
+  });
   const [dragState, setDragState] = useState<{
     draggingId: string;
     insertBeforeIdx: number;
@@ -132,6 +181,28 @@ export function App() {
     y: number;
     tabId: string;
   } | null>(null);
+
+  const updateTabScrollState = useCallback(() => {
+    const bar = tabBarRef.current;
+    if (!bar) return;
+    const maxScroll = bar.scrollWidth - bar.clientWidth;
+    const overflowing = maxScroll > 2;
+    const canLeft = bar.scrollLeft > 2;
+    const canRight = bar.scrollLeft < maxScroll - 2;
+    setTabScrollState((prev) =>
+      prev.overflowing === overflowing &&
+      prev.canLeft === canLeft &&
+      prev.canRight === canRight
+        ? prev
+        : { overflowing, canLeft, canRight }
+    );
+  }, []);
+
+  const scrollTabBarBy = useCallback((delta: number) => {
+    const bar = tabBarRef.current;
+    if (!bar) return;
+    bar.scrollBy({ left: delta, behavior: "smooth" });
+  }, []);
 
   // Panel resize splitter helper
   const startPanelResize = (
@@ -281,6 +352,44 @@ export function App() {
     bootstrap();
   }, [bootstrap]);
 
+  // Keep the active tab scrolled into view when opening or switching tabs
+  useEffect(() => {
+    if (!activeTabId) return;
+    const el = tabElsRef.current.get(activeTabId);
+    el?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+    const id = window.requestAnimationFrame(updateTabScrollState);
+    return () => window.cancelAnimationFrame(id);
+  }, [activeTabId, tabs.length, updateTabScrollState]);
+
+  // Track horizontal overflow on tab bar resize or tab list changes
+  useEffect(() => {
+    const bar = tabBarRef.current;
+    if (!bar) return;
+    updateTabScrollState();
+    const ro = new ResizeObserver(updateTabScrollState);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [tabs, uiFontSize, updateTabScrollState]);
+
+  // Close open-tabs dropdown on outside click or Escape
+  useEffect(() => {
+    if (!tabListOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (tabListMenuRef.current && !tabListMenuRef.current.contains(e.target as Node)) {
+        setTabListOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTabListOpen(false);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [tabListOpen]);
+
   useEffect(() => {
     document.documentElement.style.setProperty("--dv-root-font-size", `${uiFontSize}px`);
   }, [uiFontSize]);
@@ -400,113 +509,194 @@ export function App() {
         )}
 
         <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-          {/* Tab Bar — Zero vertical scrollbar, horizontal wheel scroll */}
-          <div
-            ref={tabBarRef}
-            onWheel={(e) => {
-              if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && tabBarRef.current) {
-                tabBarRef.current.scrollLeft += e.deltaY;
-              }
-            }}
-            className="h-9 px-1.5 pt-1 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-end gap-0.5 tab-bar-scroll select-none relative shrink-0"
-          >
-            {tabs.map((t, idx) => {
-              const isActive = t.id === activeTab?.id;
-              const isDragging = dragState?.draggingId === t.id;
-              const showDropBefore =
-                dragState !== null &&
-                dragState.insertBeforeIdx === idx &&
-                idx >= 1;
-              const showDropAfterLast =
-                dragState !== null &&
-                idx === tabs.length - 1 &&
-                dragState.insertBeforeIdx === tabs.length;
+          {/* Tab Bar — Ultra-slim 3px horizontal scrollbar, wheel scroll, ‹ › arrows & tab list dropdown */}
+          <div className="h-9 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] flex items-stretch select-none relative shrink-0">
+            <div
+              ref={tabBarRef}
+              onScroll={updateTabScrollState}
+              onWheel={(e) => {
+                if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && tabBarRef.current) {
+                  tabBarRef.current.scrollLeft += e.deltaY;
+                }
+              }}
+              className="flex-1 min-w-0 h-full px-1.5 pt-1 flex items-end gap-0.5 tab-bar-scroll relative"
+            >
+              {tabs.map((t, idx) => {
+                const isActive = t.id === activeTab?.id;
+                const isDragging = dragState?.draggingId === t.id;
+                const showDropBefore =
+                  dragState !== null &&
+                  dragState.insertBeforeIdx === idx &&
+                  idx >= 1;
+                const showDropAfterLast =
+                  dragState !== null &&
+                  idx === tabs.length - 1 &&
+                  dragState.insertBeforeIdx === tabs.length;
 
-              return (
-                <React.Fragment key={t.id}>
-                  {showDropBefore && (
-                    <div className="w-0.5 h-6 self-center rounded-full bg-indigo-500 shrink-0 -mx-0.5 z-10 pointer-events-none" />
-                  )}
-                  <div
-                    ref={(el) => {
-                      if (el) tabElsRef.current.set(t.id, el);
-                      else tabElsRef.current.delete(t.id);
-                    }}
-                    title={getTabTooltip(t)}
-                    onPointerDown={(e) => handleTabPointerDown(e, t.id)}
-                    onClick={() => {
-                      if (suppressClickRef.current) return;
-                      setActiveTab(t.id);
-                    }}
-                    onMouseDown={(e) => {
-                      if (e.button === 1 && t.id !== "objects") {
-                        e.preventDefault();
-                      }
-                    }}
-                    onAuxClick={(e) => {
-                      if (e.button === 1 && t.id !== "objects") {
-                        e.preventDefault();
-                        requestCloseTab(t.id);
-                      }
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setTabCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
-                    }}
-                    className={`group h-full px-2.5 rounded-t-md text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition border-t border-x ${
-                      isActive
-                        ? "bg-[var(--surface-canvas)] text-zinc-900 dark:text-zinc-100 border-[var(--border-strong)] font-semibold"
-                        : "border-transparent text-zinc-500 hover:bg-[var(--surface-hover)]"
-                    } ${isDragging ? "opacity-50 scale-[0.98] ring-1 ring-indigo-500/60" : ""}`}
-                  >
-                    {t.kind === "objects" && <Database className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
-                    {t.kind === "table" && <Table2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
-                    {t.kind === "query" && <FileCode2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                    {t.kind === "designer" && <Wrench className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                    {t.kind === "object_designer" && <Wrench className="w-3.5 h-3.5 text-orange-400 shrink-0" />}
-                    {t.kind === "mongo_collection" && <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                    {t.kind === "mongo_query" && <Braces className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                    {t.kind === "mongo_designer" && <Wrench className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                    {t.kind === "import_export" && <Download className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                    {t.kind === "dump_backup" && <HardDriveDownload className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
-                    {t.kind === "data_transfer" && <ArrowLeftRight className="w-3.5 h-3.5 text-teal-400 shrink-0" />}
-                    {t.kind === "sync" && <GitCompare className="w-3.5 h-3.5 text-orange-400 shrink-0" />}
-                    {t.kind === "er_model" && <Network className="w-3.5 h-3.5 text-pink-400 shrink-0" />}
-                    {t.kind === "query_builder" && <Wand2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />}
-                    {t.kind === "automation" && <Clock className="w-3.5 h-3.5 text-lime-400 shrink-0" />}
-                    {t.kind === "charts" && <BarChart3 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
-                    {t.kind === "data_gen" && <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                    <span className="max-w-[180px] truncate">
-                      {t.title}
-                      {t.dirty ? " •" : ""}
-                    </span>
-                    {(() => {
-                      const badge = getTabDbBadge(t);
-                      return badge ? (
-                        <span className="max-w-[110px] truncate px-1 py-0.2 rounded text-[0.65rem] font-normal bg-[var(--surface-elevated)] text-zinc-600 dark:text-zinc-300">
-                          {badge}
-                        </span>
-                      ) : null;
-                    })()}
-                    {t.id !== "objects" && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          requestCloseTab(t.id);
-                        }}
-                        className="p-0.5 rounded hover:bg-[var(--surface-hover)] opacity-60 group-hover:opacity-100 cursor-pointer"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
+                return (
+                  <React.Fragment key={t.id}>
+                    {showDropBefore && (
+                      <div className="w-0.5 h-6 self-center rounded-full bg-indigo-500 shrink-0 -mx-0.5 z-10 pointer-events-none" />
                     )}
-                  </div>
-                  {showDropAfterLast && (
-                    <div className="w-0.5 h-6 self-center rounded-full bg-indigo-500 shrink-0 -mx-0.5 z-10 pointer-events-none" />
+                    <div
+                      ref={(el) => {
+                        if (el) tabElsRef.current.set(t.id, el);
+                        else tabElsRef.current.delete(t.id);
+                      }}
+                      title={getTabTooltip(t)}
+                      onPointerDown={(e) => handleTabPointerDown(e, t.id)}
+                      onClick={() => {
+                        if (suppressClickRef.current) return;
+                        setActiveTab(t.id);
+                      }}
+                      onMouseDown={(e) => {
+                        if (e.button === 1 && t.id !== "objects") {
+                          e.preventDefault();
+                        }
+                      }}
+                      onAuxClick={(e) => {
+                        if (e.button === 1 && t.id !== "objects") {
+                          e.preventDefault();
+                          requestCloseTab(t.id);
+                        }
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setTabCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
+                      }}
+                      className={`group h-full px-2.5 rounded-t-md text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition border-t border-x ${
+                        isActive
+                          ? "bg-[var(--surface-canvas)] text-zinc-900 dark:text-zinc-100 border-[var(--border-strong)] font-semibold"
+                          : "border-transparent text-zinc-500 hover:bg-[var(--surface-hover)]"
+                      } ${isDragging ? "opacity-50 scale-[0.98] ring-1 ring-indigo-500/60" : ""}`}
+                    >
+                      {renderTabIcon(t.kind)}
+                      <span className="max-w-[180px] truncate">
+                        {t.title}
+                        {t.dirty ? " •" : ""}
+                      </span>
+                      {(() => {
+                        const badge = getTabDbBadge(t);
+                        return badge ? (
+                          <span className="max-w-[110px] truncate px-1 py-0.2 rounded text-[0.65rem] font-normal bg-[var(--surface-elevated)] text-zinc-600 dark:text-zinc-300">
+                            {badge}
+                          </span>
+                        ) : null;
+                      })()}
+                      {t.id !== "objects" && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            requestCloseTab(t.id);
+                          }}
+                          className="p-0.5 rounded hover:bg-[var(--surface-hover)] opacity-60 group-hover:opacity-100 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    {showDropAfterLast && (
+                      <div className="w-0.5 h-6 self-center rounded-full bg-indigo-500 shrink-0 -mx-0.5 z-10 pointer-events-none" />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {(tabScrollState.overflowing || tabs.length > 1) && (
+              <div className="flex items-center gap-0.5 px-1 border-l border-[var(--border-subtle)] bg-[var(--surface-panel)] shrink-0">
+                {tabScrollState.overflowing && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!tabScrollState.canLeft}
+                      onClick={() => scrollTabBarBy(-220)}
+                      title="Scroll Tabs Left"
+                      aria-label="Scroll Tabs Left"
+                      className="h-6 w-6 rounded flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-[var(--surface-hover)] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!tabScrollState.canRight}
+                      onClick={() => scrollTabBarBy(220)}
+                      title="Scroll Tabs Right"
+                      aria-label="Scroll Tabs Right"
+                      className="h-6 w-6 rounded flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:bg-[var(--surface-hover)] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+
+                <div ref={tabListMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setTabListOpen((v) => !v)}
+                    title={`All Open Tabs (${tabs.length})`}
+                    aria-label="All Open Tabs"
+                    className={`h-6 px-1.5 rounded flex items-center gap-0.5 text-[0.7rem] text-zinc-600 dark:text-zinc-300 hover:bg-[var(--surface-hover)] cursor-pointer ${
+                      tabListOpen ? "bg-[var(--surface-hover)]" : ""
+                    }`}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+
+                  {tabListOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-64 max-h-80 overflow-y-auto rounded-md border border-[var(--border-strong)] bg-[var(--surface-panel)] shadow-xl py-1 z-40 text-xs">
+                      <div className="px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[var(--border-subtle)]">
+                        Open Tabs ({tabs.length})
+                      </div>
+                      {tabs.map((t) => {
+                        const isActive = t.id === activeTab?.id;
+                        const badge = getTabDbBadge(t);
+                        return (
+                          <div
+                            key={t.id}
+                            onClick={() => {
+                              setActiveTab(t.id);
+                              setTabListOpen(false);
+                            }}
+                            title={getTabTooltip(t)}
+                            className={`group px-2.5 py-1.5 flex items-center gap-2 cursor-pointer ${
+                              isActive
+                                ? "bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 font-medium"
+                                : "text-zinc-700 dark:text-zinc-200 hover:bg-[var(--surface-hover)]"
+                            }`}
+                          >
+                            {renderTabIcon(t.kind)}
+                            <span className="flex-1 truncate">
+                              {t.title}
+                              {t.dirty ? " •" : ""}
+                            </span>
+                            {badge && (
+                              <span className="max-w-[90px] truncate px-1 rounded text-[0.65rem] bg-[var(--surface-elevated)] text-zinc-500 dark:text-zinc-400">
+                                {badge}
+                              </span>
+                            )}
+                            {t.id !== "objects" && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  requestCloseTab(t.id);
+                                }}
+                                title="Close Tab"
+                                className="p-0.5 rounded opacity-50 group-hover:opacity-100 hover:bg-[var(--surface-elevated)] cursor-pointer"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
-                </React.Fragment>
-              );
-            })}
+                </div>
+              </div>
+            )}
           </div>
 
           {tabCtxMenu && (() => {
